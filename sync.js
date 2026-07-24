@@ -1,0 +1,252 @@
+/* ═══════════════════════════════════════════════════════════════════════
+ * Claude Flow — 클라우드 동기화 엔진 (Supabase)
+ *
+ * 설계 원칙
+ *  1) 로컬 우선(local-first): localStorage 가 항상 로컬의 진실.
+ *     클라우드는 그 위에 얹는 "동기화 레이어"일 뿐이다.
+ *  2) 옵트인: 사용자가 URL/키를 넣고 로그인하기 전에는 아무 일도 하지 않는다.
+ *     설정 전에는 앱이 예전과 100% 동일하게 동작한다.
+ *  3) 절대 앱을 멈추지 않는다: 모든 네트워크 동작은 try/catch 로 감싸고,
+ *     실패해도 로컬 동작에는 영향을 주지 않는다.
+ *  4) 데이터 안전: 비어 있는/오래된 원격 데이터로 로컬을 절대 덮어쓰지 않는다.
+ *     충돌 시 항상 로컬 스냅샷을 백업한 뒤 처리한다.
+ *
+ * 이 파일은 순수 엔진이다. DOM 을 만지지 않으며, UI 는 index.html 이
+ * window.Sync 상태를 읽어 그린다(Sync.on(...) 리스너 사용).
+ * ═══════════════════════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+
+  var CFG_KEY  = 'claudeflow_sync_cfg';    // { url, anonKey } — 이 기기의 연결 설정
+  var REV_KEY  = 'claudeflow_sync_rev';    // 마지막으로 동기화한 리비전(number)
+  var DATA_KEY = 'claudeflow_v1';          // ⚠️ index.html 의 KEY 와 반드시 동일
+  var BACKUP_KEY = 'claudeflow_conflict_backup';
+  var TABLE    = 'flow_state';
+  var DEBOUNCE = 1500;                      // 저장 후 클라우드 업로드까지 대기(ms)
+
+  var Sync = {
+    client: null,
+    session: null,
+    cfg: null,
+    knownRev: 0,
+    dirty: false,
+    _timer: null,
+    // off | connecting | signedout | syncing | synced | error
+    status: 'off',
+    lastError: '',
+    listeners: [],
+
+    /* ── 설정 저장소(연결 정보는 동기화 대상 밖의 별도 키) ── */
+    loadCfg: function () { try { return JSON.parse(localStorage.getItem(CFG_KEY) || 'null'); } catch (e) { return null; } },
+    saveCfg: function (c) { this.cfg = c; try { localStorage.setItem(CFG_KEY, JSON.stringify(c)); } catch (e) {} },
+    clearCfg: function () { this.cfg = null; try { localStorage.removeItem(CFG_KEY); } catch (e) {} },
+
+    configured: function () { return !!(this.cfg && this.cfg.url && this.cfg.anonKey); },
+    signedIn: function () { return !!this.session; },
+    email: function () { return this.session && this.session.user ? this.session.user.email : ''; },
+
+    /* ── 상태 구독 ── */
+    on: function (fn) { this.listeners.push(fn); },
+    emit: function () { var self = this; this.listeners.forEach(function (f) { try { f(self); } catch (e) {} }); },
+    setStatus: function (s, err) { this.status = s; if (err !== undefined) this.lastError = err || ''; this.emit(); },
+
+    /* ── 로컬 데이터 헬퍼 ── */
+    readLocal: function () { try { return JSON.parse(localStorage.getItem(DATA_KEY) || 'null'); } catch (e) { return null; } },
+    isEmpty: function (s) {
+      return !s || ((!s.accounts || !s.accounts.length) && (!s.tx || !s.tx.length));
+    },
+    backupLocal: function (local) {
+      try { localStorage.setItem(BACKUP_KEY, JSON.stringify({ at: new Date().toISOString(), rev: this.knownRev, data: local })); } catch (e) {}
+    },
+
+    /* ─────────────────────────── 초기화 ─────────────────────────── */
+    init: function () {
+      this.cfg = this.loadCfg();
+      this.knownRev = +(localStorage.getItem(REV_KEY) || 0) || 0;
+      if (!this.configured()) { this.setStatus('off'); return; }
+      if (!(window.supabase && window.supabase.createClient)) {
+        this.setStatus('error', '동기화 라이브러리를 불러오지 못했어요 (오프라인일 수 있어요). 로컬 저장은 정상 동작합니다.');
+        return;
+      }
+      var self = this;
+      this.setStatus('connecting');
+      try {
+        this.client = window.supabase.createClient(this.cfg.url, this.cfg.anonKey, {
+          auth: { persistSession: true, autoRefreshToken: true, storageKey: 'claudeflow_auth' }
+        });
+        this.client.auth.onAuthStateChange(function (_evt, session) {
+          self.session = session;
+          if (session) { self.pull(true); }
+          else { self.setStatus('signedout'); }
+        });
+        this.client.auth.getSession().then(function (res) {
+          self.session = (res && res.data) ? res.data.session : null;
+          if (self.session) { self.pull(true); }
+          else { self.setStatus('signedout'); }
+        }).catch(function (e) { self.setStatus('error', self._msg(e)); });
+
+        // 다른 기기에서의 변경을 받아오기 위해 앱이 다시 활성화될 때 pull
+        document.addEventListener('visibilitychange', function () {
+          if (document.visibilityState === 'visible' && self.session) self.pull(true);
+        });
+      } catch (e) { this.setStatus('error', this._msg(e)); }
+    },
+
+    /* ─────────────────────────── 인증 ─────────────────────────── */
+    _ensureClient: function () {
+      if (this.client) return true;
+      if (!this.configured()) { this.setStatus('error', '먼저 Supabase 연결 정보를 입력해주세요.'); return false; }
+      if (!(window.supabase && window.supabase.createClient)) { this.setStatus('error', '동기화 라이브러리를 불러오지 못했어요.'); return false; }
+      this.client = window.supabase.createClient(this.cfg.url, this.cfg.anonKey, {
+        auth: { persistSession: true, autoRefreshToken: true, storageKey: 'claudeflow_auth' }
+      });
+      return true;
+    },
+
+    connect: function (url, anonKey) {
+      url = (url || '').trim().replace(/\/+$/, '');
+      anonKey = (anonKey || '').trim();
+      if (!/^https:\/\/.+/.test(url)) return Promise.reject(new Error('올바른 Supabase URL(https://…)을 입력해주세요.'));
+      if (anonKey.length < 20) return Promise.reject(new Error('anon key 를 다시 확인해주세요.'));
+      this.saveCfg({ url: url, anonKey: anonKey });
+      this.client = null;
+      this.setStatus('connecting');
+      this.init();
+      return Promise.resolve();
+    },
+
+    signUp: function (email, pw) {
+      if (!this._ensureClient()) return Promise.reject(new Error(this.lastError));
+      var self = this;
+      this.setStatus('connecting');
+      return this.client.auth.signUp({ email: email, password: pw }).then(function (res) {
+        if (res.error) throw res.error;
+        // 이메일 인증이 꺼져 있으면 즉시 세션이 생김. 켜져 있으면 확인 메일 필요.
+        if (res.data && res.data.session) { self.session = res.data.session; self.pull(true); return { needConfirm: false }; }
+        self.setStatus('signedout');
+        return { needConfirm: true };
+      }).catch(function (e) { self.setStatus('error', self._msg(e)); throw e; });
+    },
+
+    signIn: function (email, pw) {
+      if (!this._ensureClient()) return Promise.reject(new Error(this.lastError));
+      var self = this;
+      this.setStatus('connecting');
+      return this.client.auth.signInWithPassword({ email: email, password: pw }).then(function (res) {
+        if (res.error) throw res.error;
+        self.session = res.data.session;
+        return self.pull(true);
+      }).catch(function (e) { self.setStatus('error', self._msg(e)); throw e; });
+    },
+
+    signOut: function () {
+      var self = this;
+      if (!this.client) { this.session = null; this.setStatus('signedout'); return Promise.resolve(); }
+      return this.client.auth.signOut().then(function () {
+        self.session = null; self.setStatus('signedout');
+      }).catch(function () { self.session = null; self.setStatus('signedout'); });
+    },
+
+    disconnect: function () {
+      // 로그아웃 + 이 기기의 연결 설정 제거(로컬 데이터는 그대로 둔다)
+      var self = this;
+      var done = function () { self.clearCfg(); self.client = null; self.session = null; self.knownRev = 0; try { localStorage.removeItem(REV_KEY); } catch (e) {} self.setStatus('off'); };
+      if (this.client) return this.client.auth.signOut().then(done).catch(done);
+      done(); return Promise.resolve();
+    },
+
+    /* ─────────────────────────── 내려받기(pull) ─────────────────────────── */
+    pull: function (applyToApp) {
+      if (!this.session || !this.client) return Promise.resolve();
+      var self = this;
+      this.setStatus('syncing');
+      return this.client.from(TABLE).select('data,rev').eq('user_id', this.session.user.id).maybeSingle()
+        .then(function (res) {
+          if (res.error) throw res.error;
+          var row = res.data;                 // { data, rev } | null
+          var local = self.readLocal();
+
+          // 1) 클라우드가 비었음 → 로컬이 있으면 올려서 시드, 없으면 완료
+          if (!row || self.isEmpty(row.data)) {
+            if (!self.isEmpty(local)) { self.dirty = true; return self.push(true); }
+            self.setStatus('synced'); return;
+          }
+          // 2) 로컬이 비었음 → 원격 채택(첫 기기 동기화)
+          if (self.isEmpty(local)) { return self.adopt(row, applyToApp); }
+
+          // 3) 양쪽 다 있음 → 리비전 비교
+          var remoteRev = row.rev || 0;
+          if (remoteRev > self.knownRev) {
+            // 원격이 더 최신 → 로컬 백업 후 채택
+            self.backupLocal(local);
+            return self.adopt(row, applyToApp);
+          } else if (remoteRev < self.knownRev) {
+            // 로컬이 더 최신 → 올림
+            self.dirty = true; return self.push(true);
+          } else {
+            self.setStatus('synced'); // 같은 리비전 → 동일하다고 간주
+          }
+        })
+        .catch(function (e) { self.setStatus('error', self._msg(e)); });
+    },
+
+    adopt: function (row, applyToApp) {
+      try {
+        localStorage.setItem(DATA_KEY, JSON.stringify(row.data));
+        this.knownRev = row.rev || 0;
+        localStorage.setItem(REV_KEY, String(this.knownRev));
+      } catch (e) {}
+      if (applyToApp && typeof window.reloadStateFromStorage === 'function') {
+        try { window.reloadStateFromStorage(); } catch (e) {}
+      }
+      this.setStatus('synced');
+    },
+
+    /* ─────────────────────────── 올리기(push) ─────────────────────────── */
+    // 저장이 일어날 때마다 호출 → 디바운스 후 업로드
+    markDirty: function () {
+      if (!this.session || !this.client) return;
+      this.dirty = true;
+      var self = this;
+      clearTimeout(this._timer);
+      this._timer = setTimeout(function () { self.push(); }, DEBOUNCE);
+    },
+
+    push: function (force) {
+      if (!this.session || !this.client) return Promise.resolve();
+      if (!this.dirty && !force) return Promise.resolve();
+      var local = this.readLocal();
+      // 실수로 빈 데이터를 올려 클라우드를 날리는 것 방지(강제 시드는 예외)
+      if (this.isEmpty(local) && !force) { this.dirty = false; this.setStatus('synced'); return Promise.resolve(); }
+      var self = this;
+      var nextRev = (this.knownRev || 0) + 1;
+      this.setStatus('syncing');
+      return this.client.from(TABLE).upsert({
+        user_id: this.session.user.id,
+        data: local,
+        rev: nextRev,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'user_id' }).then(function (res) {
+        if (res.error) throw res.error;
+        self.knownRev = nextRev;
+        try { localStorage.setItem(REV_KEY, String(nextRev)); } catch (e) {}
+        self.dirty = false;
+        self.setStatus('synced');
+      }).catch(function (e) { self.setStatus('error', self._msg(e)); });
+    },
+
+    /* 사용자가 수동으로 "지금 동기화" 눌렀을 때 */
+    syncNow: function () {
+      if (!this.session) return Promise.resolve();
+      if (this.dirty) return this.push(true);
+      return this.pull(true);
+    },
+
+    _msg: function (e) {
+      if (!e) return '알 수 없는 오류';
+      return e.message || e.error_description || (typeof e === 'string' ? e : JSON.stringify(e));
+    }
+  };
+
+  window.Sync = Sync;
+})();
