@@ -91,6 +91,15 @@ alter publication supabase_realtime add table public.flow_state;
 
 ---
 
+### 3-6. 서버 AI (선택 — 키를 서버로 옮기기)
+AI 해설(리포트·주간 브리핑)을 **서버에서** 처리하면 → 키가 브라우저에 노출되지 않고, **모든 기기에서 키 없이** AI가 켜져요. 로그인돼 있으면 앱이 자동으로 서버 AI를 우선 사용합니다(없으면 기존 로컬 키로 폴백).
+
+1. Supabase **Edge Functions → 새 함수 `ai` 생성** → [`supabase/functions/ai/index.ts`](supabase/functions/ai/index.ts) 내용을 붙여넣고 **Deploy**
+2. **Edge Functions → Secrets** 에 `GEMINI_API_KEY = 당신의 Gemini 키` 추가 (선택: `AI_MODEL`)
+3. 끝 — 앱에서 로그인 상태면 자동으로 서버 AI를 씁니다. (`verify_jwt`는 켠 채로 두세요: 로그인한 사람만 호출 가능)
+
+> CLI를 쓰면: `supabase functions deploy ai` + `supabase secrets set GEMINI_API_KEY=…`
+
 ## 4. 데이터 안전
 
 - **로컬 우선:** 앱은 항상 기기 저장소를 먼저 씁니다. 인터넷/클라우드가 안 돼도 그대로 동작합니다.

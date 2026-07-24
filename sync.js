@@ -275,6 +275,19 @@
       return this.pull(true);
     },
 
+    /* ─────────── 서버 AI 호출(Edge Function) ───────────
+     * 로그인한 사용자만 호출 가능(JWT는 supabase-js가 자동 첨부).
+     * 서버에 저장된 키를 쓰므로 브라우저에 키가 노출되지 않고, 모든 기기 공용. */
+    aiReady: function () { return !!(this.client && this.session); },
+    callAI: function (prompt) {
+      if (!this.client || !this.session) return Promise.reject(new Error('로그인이 필요해요'));
+      return this.client.functions.invoke('ai', { body: { prompt: prompt } }).then(function (res) {
+        if (res.error) throw new Error((res.error && res.error.message) || '서버 AI 호출 실패');
+        if (res.data && res.data.error) throw new Error(res.data.error);
+        return (res.data && res.data.text) || '';
+      });
+    },
+
     /* ─────────────────────────── 버전 복원(타임머신) ─────────────────────────── */
     // 서버의 flow_state_history(최근 30개 자동 백업) 목록/복원. (schema.sql 필요)
     listVersions: function () {

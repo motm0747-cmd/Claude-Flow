@@ -1616,7 +1616,7 @@ function renderReport(){
       <div style="font-weight:800;margin-bottom:4px">${ymLabel(repYM)} 리포트</div>
       <div class="muted" style="margin-bottom:16px">${has?'지출·수입 데이터로 월간 리포트를 만들어요.':'이 달의 기록이 아직 없어요.'}</div>
       <button class="btn primary block" id="gen-btn" ${has?'':'disabled'} onclick="genReport('${repYM}')">리포트 생성</button>
-      <div class="tiny" style="margin-top:8px">${S.settings.gemini?'✦ Gemini AI 해설 포함':'설정에서 Gemini API 키를 넣으면 AI 해설이 추가돼요'}</div>
+      <div class="tiny" style="margin-top:8px">${aiEnabled()?'✦ AI 해설 포함':'설정에서 클라우드 로그인 또는 Gemini 키를 넣으면 AI 해설이 켜져요'}</div>
     </div>`;
     return;
   }
@@ -1680,7 +1680,7 @@ async function genReport(ym){
   const btn=$('gen-btn');
   if(btn){btn.disabled=true;btn.textContent='생성 중…'}
   let headline=ruleHeadline(st,ym), aiText=ruleCommentary(st), tips=ruleTips(st), byAI=false, aiFail='';
-  if(S.settings.gemini){
+  if(aiEnabled()){
     try{
       const prompt=`너는 한국 대학생 사회초년생을 위한 따뜻하지만 직설적인 재무 코치야. 아래 ${ymLabel(ym)} 가계부 데이터를 분석해서 JSON으로만 답해. 형식: {"headline":"신문 헤드라인 같은 한 문장(25자 내외)","commentary":"소비 패턴 해설 3~4문장. 구체적 숫자 인용","tips":["다음 달 실천 팁1","팁2","팁3"]}
 데이터: 수입 ${st.inc}원(전월대비 ${st.incD===null?'비교불가':st.incD.toFixed(0)+'%'}), 지출 ${st.exp}원(전월대비 ${st.expD===null?'비교불가':st.expD.toFixed(0)+'%'}), 저축률 ${st.saveRate}%, 지출TOP3 ${st.top3.map(([c,v])=>`${c} ${v}원`).join(', ')||'없음'}, 최대 단일지출 ${st.maxTx?`${st.maxTx.memo||st.maxTx.cat} ${st.maxTx.amount}원`:'없음'}, 카테고리별 상세 ${JSON.stringify(catSums(ym).slice(0,8))}`;
@@ -1693,7 +1693,22 @@ async function genReport(ym){
   save();repYM=ym;renderReport();
   toast(aiFail?('기본 해설로 생성 · AI 실패: '+aiFail):'리포트를 저장했어요 ✓');
 }
+// AI 사용 가능 여부: 클라우드 로그인(서버 키) 또는 로컬 Gemini 키
+function aiEnabled(){ return !!(window.Sync && Sync.aiReady && Sync.aiReady()) || !!(S.settings&&S.settings.gemini); }
 async function gemini(prompt){
+  // 1) 클라우드 로그인 상태면 서버 함수(Edge Function) 우선 — 키 노출 없음, 모든 기기 공용
+  if(window.Sync && Sync.aiReady && Sync.aiReady()){
+    try{ return (await Sync.callAI(prompt))||''; }
+    catch(e){
+      // 서버 함수가 아직 없거나 실패 → 로컬 키가 있으면 폴백, 없으면 에러 전파
+      if(!S.settings.gemini){ const err=new Error((e&&e.message)||'서버 AI를 불러오지 못했어요'); err.kind='server'; throw err; }
+    }
+  }
+  // 2) 로컬 키로 직접 호출 (기존 방식 · 폴백)
+  if(!S.settings.gemini){ const err=new Error('AI가 설정되지 않았어요 (설정에서 로그인 또는 키 입력)'); err.kind='config'; throw err; }
+  return geminiDirect(prompt);
+}
+async function geminiDirect(prompt){
   let res;
   try{
     const c=(typeof AbortController!=='undefined')?new AbortController():null;
@@ -1742,7 +1757,7 @@ function renderWeekly(){
     <div style="font-weight:800;font-size:.9rem">주간 브리핑 <span class="badge terra">✦ AI</span></div>
     <button class="btn soft sm" id="wk-btn" onclick="genWeekly()">${w?'다시 생성':'생성'}</button></div>
     <div class="tiny num" style="margin-bottom:6px">최근 7일 · 지출 ${fmt(cur.exp)} · 수입 ${fmt(cur.inc)}</div>
-    ${w?`<div style="font-size:.86rem;white-space:pre-wrap">${esc(w.text)}</div><div class="tiny" style="margin-top:6px">${w.createdAt} 생성${w.byAI?' · Gemini':''}</div>`
+    ${w?`<div style="font-size:.86rem;white-space:pre-wrap">${esc(w.text)}</div><div class="tiny" style="margin-top:6px">${w.createdAt} 생성${w.byAI?' · AI':''}</div>`
       :`<div class="tiny">버튼을 누르면 지난 7일 소비를 요약하고 다음 주 조언을 만들어드려요.</div>`}`;
 }
 function ruleWeekly(cur,prev){
@@ -1757,7 +1772,7 @@ async function genWeekly(){
   const btn=$('wk-btn'); if(btn){btn.disabled=true;btn.textContent='생성 중…'}
   const cur=weekStats(0),prev=weekStats(1);
   let text=ruleWeekly(cur,prev),byAI=false,aiFail='';
-  if(S.settings.gemini){
+  if(aiEnabled()){
     try{
       const prompt=`너는 한국 대학생을 위한 따뜻하지만 직설적인 재무 코치야. 아래 주간 가계부를 3~4문장으로 요약하고 다음 주 조언 1가지를 붙여. 순수 문장만 출력(JSON·마크다운 금지). 최근 7일: 지출 ${cur.exp}원, 수입 ${cur.inc}원, 지출 TOP ${cur.top.map(([c,v])=>c+' '+v+'원').join(', ')||'없음'}. 직전 7일: 지출 ${prev.exp}원. 오늘은 ${todayStr()}.`;
       const out=(await gemini(prompt)).trim();
@@ -2717,9 +2732,9 @@ function openSettings(){
   openModal(`${sheetHead('설정')}
     ${renderSyncSection()}
     ${renderThemeSection()}
-    <div class="field"><label>Gemini API 키 (무료)</label>
+    <div class="field"><label>Gemini API 키 ${(window.Sync&&Sync.aiReady&&Sync.aiReady())?'(선택 · 클라우드 로그인 시 불필요)':'(무료)'}</label>
       <input id="st-key" type="password" placeholder="AIza…" value="${esc(S.settings.gemini)}">
-      <div class="tiny" style="margin-top:5px">Google AI Studio(aistudio.google.com)에서 무료 발급 → 리포트 AI 해설과 맞춤 코칭이 켜져요. 키는 이 기기에만 저장됩니다.</div>
+      <div class="tiny" style="margin-top:5px">${(window.Sync&&Sync.aiReady&&Sync.aiReady())?'☁️ 클라우드에 로그인돼 있어 <b>서버에 등록된 키</b>로 AI가 동작해요 — 이 칸은 비워둬도 됩니다(폴백용으로만).':'Google AI Studio(aistudio.google.com)에서 무료 발급 → 리포트 AI 해설과 맞춤 코칭이 켜져요. 키는 이 기기에만 저장됩니다.'}</div>
       ${S.settings.aiErr?`<div class="card tight" style="background:var(--terra-soft);border-color:var(--terra-line);margin-top:9px">
         <div style="font-size:.82rem;font-weight:700;color:var(--terra-deep)">⚠️ 최근 AI 호출 실패 — ${esc(S.settings.aiErr)}</div>
         <div class="tiny" style="margin-top:4px;color:#6E4a3a">AI 없이도 리포트·브리핑은 규칙 기반으로 정상 생성돼요.</div></div>`:''}</div>
