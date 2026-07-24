@@ -3,7 +3,7 @@
  * 목적: 설치형 PWA + 오프라인 동작. 앱 껍데기는 캐시, API 호출은 절대 캐시하지 않음.
  * 캐시 버전을 올리면(아래 CACHE) 이전 캐시는 자동 정리된다.
  * ═══════════════════════════════════════════════════════════════════════ */
-const CACHE = 'claude-flow-v2';
+const CACHE = 'claude-flow-v3';
 
 // 앱 껍데기(오프라인에도 떠야 하는 정적 자원)
 const SHELL = [
@@ -78,4 +78,33 @@ self.addEventListener('fetch', (e) => {
 
   // 4) 그 외 외부 요청(Supabase REST/Auth, Gemini, 환율 API 등): 네트워크 전용, 캐시 금지
   //    → respondWith 하지 않고 브라우저 기본 처리에 맡긴다.
+});
+
+// ── 푸시 알림 수신 → 알림 표시 ──
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; }
+  catch (_) { d = { body: e.data ? e.data.text() : '' }; }
+  const title = d.title || 'Claude Flow';
+  const options = {
+    body: d.body || '',
+    icon: 'icons/icon-192.png',
+    badge: 'icons/icon-192.png',
+    tag: d.tag || 'claude-flow',
+    renotify: true,
+    data: { url: d.url || './' },
+  };
+  e.waitUntil(self.registration.showNotification(title, options));
+});
+
+// ── 알림 클릭 → 앱 열기/포커스 ──
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || './';
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const c of list) { if ('focus' in c) return c.focus(); }
+      if (self.clients.openWindow) return self.clients.openWindow(url);
+    })
+  );
 });

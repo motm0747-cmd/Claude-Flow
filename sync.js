@@ -24,6 +24,15 @@
   var TABLE    = 'flow_state';
   var DEBOUNCE = 1500;                      // 저장 후 클라우드 업로드까지 대기(ms)
 
+  // VAPID 공개키(base64url) → Uint8Array (pushManager.subscribe 용)
+  function urlB64ToUint8Array(base64String) {
+    var padding = '='.repeat((4 - base64String.length % 4) % 4);
+    var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    var raw = atob(base64), arr = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+    return arr;
+  }
+
   var Sync = {
     client: null,
     session: null,
@@ -296,6 +305,58 @@
         .eq('user_id', this.session.user.id).maybeSingle()
         .then(function (res) { return (res && !res.error && res.data) ? res.data : null; })
         .catch(function () { return null; });
+    },
+
+    /* ─────────────────────────── 푸시 알림 ─────────────────────────── */
+    pushSupported: function () {
+      return ('serviceWorker' in navigator) && ('PushManager' in window) && ('Notification' in window);
+    },
+    // 홈 화면에 설치된 앱인지(iOS는 설치된 앱에서만 푸시 가능)
+    isStandalone: function () {
+      return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (navigator.standalone === true);
+    },
+    pushSubscribed: function () {
+      if (!this.pushSupported()) return Promise.resolve(false);
+      return navigator.serviceWorker.ready
+        .then(function (reg) { return reg.pushManager.getSubscription(); })
+        .then(function (s) { return !!s; }).catch(function () { return false; });
+    },
+    enablePush: function (vapidPublic) {
+      var self = this;
+      if (!this.client || !this.session) return Promise.reject(new Error('로그인이 필요해요'));
+      if (!this.pushSupported()) return Promise.reject(new Error('이 브라우저는 푸시를 지원하지 않아요'));
+      return Notification.requestPermission().then(function (perm) {
+        if (perm !== 'granted') throw new Error('알림 권한이 필요해요 (브라우저/기기 설정에서 허용)');
+        return navigator.serviceWorker.ready;
+      }).then(function (reg) {
+        return reg.pushManager.getSubscription().then(function (existing) {
+          return existing || reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlB64ToUint8Array(vapidPublic),
+          });
+        });
+      }).then(function (sub) {
+        return self.client.from('push_subscriptions').upsert(
+          { user_id: self.session.user.id, endpoint: sub.endpoint, subscription: sub.toJSON() },
+          { onConflict: 'user_id,endpoint' }
+        ).then(function (res) { if (res.error) throw res.error; return true; });
+      });
+    },
+    disablePush: function () {
+      var self = this;
+      if (!this.pushSupported()) return Promise.resolve();
+      return navigator.serviceWorker.ready.then(function (reg) {
+        return reg.pushManager.getSubscription().then(function (sub) {
+          if (!sub) return;
+          var ep = sub.endpoint;
+          return sub.unsubscribe().then(function () {
+            if (self.client && self.session) {
+              return self.client.from('push_subscriptions').delete()
+                .eq('user_id', self.session.user.id).eq('endpoint', ep);
+            }
+          });
+        });
+      });
     },
 
     /* ─────────────────────────── 버전 복원(타임머신) ─────────────────────────── */

@@ -2732,6 +2732,7 @@ function renderProfile(){
 function openSettings(){
   openModal(`${sheetHead('설정')}
     ${renderSyncSection()}
+    ${renderPushSection()}
     ${renderThemeSection()}
     <div class="field"><label>Gemini API 키 ${(window.Sync&&Sync.aiReady&&Sync.aiReady())?'(선택 · 클라우드 로그인 시 불필요)':'(무료)'}</label>
       <input id="st-key" type="password" placeholder="AIza…" value="${esc(S.settings.gemini)}">
@@ -2751,6 +2752,7 @@ function openSettings(){
     <div class="divider"></div>
     <button class="btn ghost block" style="color:var(--danger)" onclick="if(confirm('모든 데이터를 삭제할까요? 되돌릴 수 없어요.')){localStorage.removeItem(KEY);location.reload()}">전체 초기화</button>
     <div class="tiny" style="text-align:center;margin-top:14px">Claude Flow · 클라우드 동기화를 켜지 않으면 데이터는 이 기기에만 저장됩니다</div>`);
+  refreshPushBtn();
 }
 function exportData(){
   const blob=new Blob([JSON.stringify(S,null,2)],{type:'application/json'});
@@ -2849,6 +2851,31 @@ function renderDigestCard(d){
 function refreshDigest(){
   if(!(window.Sync && Sync.signedIn && Sync.signedIn() && Sync.getDigest)){ const el=$('digest-slot'); if(el)el.innerHTML=''; return; }
   Sync.getDigest().then(renderDigestCard).catch(()=>{});
+}
+
+/* ═════════ 푸시 알림 ═════════ */
+const PUSH_VAPID_PUBLIC='BPep1bWZpopdA2fr5BZWWehvkGot6vMA_kq6dHDEjsb7dt-a4E2cFZBUaLbdh56MlUh5zSu30vb23H4toUooJzo';
+let _pushOn=false;
+const _isIOS=()=>/iPhone|iPad|iPod/.test(navigator.userAgent);
+function renderPushSection(){
+  if(!(window.Sync && Sync.signedIn && Sync.signedIn())) return ''; // 로그인 상태에서만
+  if(!(Sync.pushSupported && Sync.pushSupported())){
+    return `<div class="tiny" style="margin:2px 2px 14px">🔔 이 브라우저에선 푸시를 지원하지 않아요.${_isIOS()?' 아이폰은 <b>홈 화면에 추가한 앱</b>에서 열어야 알림을 켤 수 있어요 (iOS 16.4+).':''}</div>`;
+  }
+  const iosHint=(_isIOS() && Sync.isStandalone && !Sync.isStandalone())?' <b>홈 화면 앱</b>에서 켜주세요.':'';
+  return `<button class="btn ghost block" style="margin-bottom:6px" onclick="togglePush()" id="push-btn">${_pushOn?'🔔 푸시 알림 끄기':'🔔 푸시 알림 켜기'}</button>
+    <div class="tiny" style="margin:0 2px 14px">아침에 다가오는 결제·리마인더를 폰 알림으로 받아요.${iosHint}</div>`;
+}
+function refreshPushBtn(){
+  if(!(window.Sync && Sync.pushSubscribed)) return;
+  Sync.pushSubscribed().then(on=>{ _pushOn=on; const b=$('push-btn'); if(b)b.textContent=on?'🔔 푸시 알림 끄기':'🔔 푸시 알림 켜기'; });
+}
+async function togglePush(){
+  try{
+    if(_pushOn){ await Sync.disablePush(); _pushOn=false; toast('푸시 알림을 껐어요'); }
+    else { toast('알림 권한 요청 중…'); await Sync.enablePush(PUSH_VAPID_PUBLIC); _pushOn=true; toast('푸시 알림을 켰어요 🔔'); }
+  }catch(e){ toast('실패 — '+(e.message||'')); }
+  const b=$('push-btn'); if(b)b.textContent=_pushOn?'🔔 푸시 알림 끄기':'🔔 푸시 알림 켜기';
 }
 function renderSyncSection(){
   if(!window.Sync) return '';
