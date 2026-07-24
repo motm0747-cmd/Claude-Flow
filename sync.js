@@ -95,10 +95,13 @@
           else { self.setStatus('signedout'); }
         }).catch(function (e) { self.setStatus('error', self._msg(e)); });
 
-        // 다른 기기에서의 변경을 받아오기 위해 앱이 다시 활성화될 때 pull
+        // 앱이 다시 보이면 최신본 pull, 백그라운드로 가면 밀린 변경 즉시 flush
         document.addEventListener('visibilitychange', function () {
-          if (document.visibilityState === 'visible' && self.session) self.pull(true);
+          if (!self.session) return;
+          if (document.visibilityState === 'visible') self.pull(true);
+          else if (self.dirty) { clearTimeout(self._timer); self.push(); }
         });
+        window.addEventListener('pagehide', function () { if (self.session && self.dirty) { clearTimeout(self._timer); self.push(); } });
       } catch (e) { this.setStatus('error', this._msg(e)); }
     },
 
