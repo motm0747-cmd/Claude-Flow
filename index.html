@@ -360,6 +360,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
   <div class="view on" id="view-home">
     <div id="storage-banner"></div>
     <div id="sync-banner"></div>
+    <div id="digest-slot"></div>
     <div id="brief-slot"></div>
     <div id="report-banner"></div>
     <div id="dca-banner"></div>
@@ -2837,6 +2838,18 @@ function renderSyncBanner(){
   }
   const line=$('sync-status-line'); if(line){ line.textContent=syncStatusText(); line.style.color=syncStatusColor(); }
 }
+/* 서버 자동화: 매일 계산된 '오늘의 리마인더' 카드 */
+function renderDigestCard(d){
+  const el=$('digest-slot'); if(!el) return;
+  if(!d || !d.digest || !Array.isArray(d.digest.items) || !d.digest.items.length){ el.innerHTML=''; return; }
+  el.innerHTML=`<div class="card tight">
+    <div class="row" style="margin-bottom:6px"><b style="font-size:.9rem">🌅 오늘의 리마인더</b><span class="tiny">서버 · ${esc(d.digest.date||'')}</span></div>
+    ${d.digest.items.map(it=>`<div class="row" style="padding:6px 0;gap:8px"><span style="font-size:1.05rem">${esc(it.emo||'•')}</span><span style="flex:1;font-size:.86rem;font-weight:600">${esc(it.title||'')}</span><span class="tiny num" style="text-align:right">${esc(it.detail||'')}</span></div>`).join('')}</div>`;
+}
+function refreshDigest(){
+  if(!(window.Sync && Sync.signedIn && Sync.signedIn() && Sync.getDigest)){ const el=$('digest-slot'); if(el)el.innerHTML=''; return; }
+  Sync.getDigest().then(renderDigestCard).catch(()=>{});
+}
 function renderSyncSection(){
   if(!window.Sync) return '';
   const configured=Sync.configured(), signedIn=Sync.signedIn();
@@ -2907,7 +2920,7 @@ autoFx();
 if('serviceWorker' in navigator){
   window.addEventListener('load',()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{}); });
 }
-window.addEventListener('load',()=>{ if(window.Sync){ Sync.on(renderSyncBanner); Sync.init(); renderSyncBanner(); } });
+window.addEventListener('load',()=>{ if(window.Sync){ Sync.on((s)=>{ renderSyncBanner(); if(s&&s.status==='synced') refreshDigest(); }); Sync.init(); renderSyncBanner(); } });
 </script>
 </body>
 </html>

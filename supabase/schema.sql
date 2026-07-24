@@ -90,3 +90,21 @@ begin
     execute 'alter publication supabase_realtime add table public.flow_state';
   end if;
 end $$;
+
+-- ══════════════════════════════════════════════════════════════════════
+-- 서버 자동화: 오늘의 리마인더 저장소 (digest Edge Function 이 매일 채움)
+-- 사용자는 본인 것만 읽을 수 있고, 쓰기는 서버(service_role)만 한다.
+-- ══════════════════════════════════════════════════════════════════════
+create table if not exists public.daily_digest (
+  user_id     uuid        primary key references auth.users(id) on delete cascade,
+  digest      jsonb       not null default '{}'::jsonb,
+  computed_at timestamptz not null default now()
+);
+alter table public.daily_digest enable row level security;
+
+drop policy if exists "daily_digest owner can read" on public.daily_digest;
+create policy "daily_digest owner can read"
+  on public.daily_digest
+  for select
+  to authenticated
+  using (auth.uid() = user_id);

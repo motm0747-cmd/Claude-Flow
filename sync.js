@@ -288,6 +288,16 @@
       });
     },
 
+    /* ─────────── 서버 자동화: 오늘의 리마인더(daily_digest) 조회 ───────────
+     * 서버 스케줄 함수가 매일 계산해 둔 요약/리마인더를 읽어온다. (없으면 null) */
+    getDigest: function () {
+      if (!this.client || !this.session) return Promise.resolve(null);
+      return this.client.from('daily_digest').select('digest,computed_at')
+        .eq('user_id', this.session.user.id).maybeSingle()
+        .then(function (res) { return (res && !res.error && res.data) ? res.data : null; })
+        .catch(function () { return null; });
+    },
+
     /* ─────────────────────────── 버전 복원(타임머신) ─────────────────────────── */
     // 서버의 flow_state_history(최근 30개 자동 백업) 목록/복원. (schema.sql 필요)
     listVersions: function () {
