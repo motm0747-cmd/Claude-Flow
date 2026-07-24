@@ -7,8 +7,11 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#FAF9F5">
 <title>Claude Flow</title>
-<link rel="manifest" href="data:application/manifest+json,{&quot;name&quot;:&quot;Claude%20Flow&quot;,&quot;short_name&quot;:&quot;Flow&quot;,&quot;start_url&quot;:&quot;.&quot;,&quot;scope&quot;:&quot;.&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;rgb(250,249,245)&quot;,&quot;theme_color&quot;:&quot;rgb(250,249,245)&quot;,&quot;orientation&quot;:&quot;portrait&quot;,&quot;icons&quot;:[{&quot;src&quot;:&quot;data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%20512%20512%27%3E%3Crect%20width=%27512%27%20height=%27512%27%20rx=%27114%27%20fill=%27rgb(250,249,245)%27/%3E%3Cpath%20d=%27M256%20108c-26%200-47%2021-47%2047v40h-49c-26%200-47%2021-47%2047s21%2047%2047%2047h49v40c0%2026%2021%2047%2047%2047s47-21%2047-47v-40h49c26%200%2047-21%2047-47s-21-47-47-47h-49v-40c0-26-21-47-47-47z%27%20fill=%27rgb(217,119,87)%27/%3E%3C/svg%3E&quot;,&quot;sizes&quot;:&quot;any&quot;,&quot;type&quot;:&quot;image/svg+xml&quot;,&quot;purpose&quot;:&quot;any%20maskable&quot;}]}">
-<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%20512%20512%27%3E%3Crect%20width=%27512%27%20height=%27512%27%20rx=%27114%27%20fill=%27rgb(250,249,245)%27/%3E%3Cpath%20d=%27M256%20108c-26%200-47%2021-47%2047v40h-49c-26%200-47%2021-47%2047s21%2047%2047%2047h49v40c0%2026%2021%2047%2047%2047s47-21%2047-47v-40h49c26%200%2047-21%2047-47s-21-47-47-47h-49v-40c0-26-21-47-47-47z%27%20fill=%27rgb(217,119,87)%27/%3E%3C/svg%3E">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg">
 <meta name="apple-mobile-web-app-title" content="Claude Flow">
 <meta name="mobile-web-app-capable" content="yes">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
@@ -290,6 +293,9 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .rec-diff{font-weight:800;font-size:.9rem;white-space:nowrap}
 .fx-chip{display:inline-flex;align-items:center;gap:5px;background:var(--blue-soft);color:var(--blue);border-radius:99px;padding:4px 10px;font-size:.72rem;font-weight:700}
 </style>
+<!-- 클라우드 동기화(Supabase) — 실패해도 앱은 로컬로 정상 동작 -->
+<script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script defer src="sync.js"></script>
 </head>
 <body>
 <div id="app">
@@ -301,6 +307,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
   <!-- ─────────── 홈 ─────────── -->
   <div class="view on" id="view-home">
     <div id="storage-banner"></div>
+    <div id="sync-banner"></div>
     <div id="brief-slot"></div>
     <div id="report-banner"></div>
     <div id="dca-banner"></div>
@@ -497,7 +504,7 @@ function migrate(){
   });
 }
 migrate();
-const save=()=>store.save(S);
+const save=()=>{const ok=store.save(S); if(window.Sync&&window.Sync.markDirty)window.Sync.markDirty(); return ok;};
 const uid=()=> Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const AMT_MAX=1000000000; // 10억 — 오타 방어 상한
 function checkAmt(v,label){
@@ -2656,6 +2663,7 @@ function renderProfile(){
 /* ═════════ 설정 ═════════ */
 function openSettings(){
   openModal(`${sheetHead('설정')}
+    ${renderSyncSection()}
     <div class="field"><label>Gemini API 키 (무료)</label>
       <input id="st-key" type="password" placeholder="AIza…" value="${esc(S.settings.gemini)}">
       <div class="tiny" style="margin-top:5px">Google AI Studio(aistudio.google.com)에서 무료 발급 → 리포트 AI 해설과 맞춤 코칭이 켜져요. 키는 이 기기에만 저장됩니다.</div>
@@ -2672,7 +2680,7 @@ function openSettings(){
     <input type="file" id="st-file" accept=".json" style="display:none" onchange="importData(this)">
     <div class="divider"></div>
     <button class="btn ghost block" style="color:var(--danger)" onclick="if(confirm('모든 데이터를 삭제할까요? 되돌릴 수 없어요.')){localStorage.removeItem(KEY);location.reload()}">전체 초기화</button>
-    <div class="tiny" style="text-align:center;margin-top:14px">Claude Flow · 데이터는 이 기기 안에만 저장됩니다</div>`);
+    <div class="tiny" style="text-align:center;margin-top:14px">Claude Flow · 클라우드 동기화를 켜지 않으면 데이터는 이 기기에만 저장됩니다</div>`);
 }
 function exportData(){
   const blob=new Blob([JSON.stringify(S,null,2)],{type:'application/json'});
@@ -2709,11 +2717,81 @@ function importData(input){
   r.readAsText(f);
 }
 
+/* ═════════ 클라우드 동기화 UI (window.Sync 엔진은 sync.js) ═════════ */
+// 클라우드에서 새 데이터를 채택했을 때 메모리 상태를 다시 읽어 화면 갱신
+window.reloadStateFromStorage=function(){ const d=store.load(); if(d){ S=d; migrate(); renderAll(); } };
+function syncStatusText(){
+  if(!window.Sync) return '';
+  switch(Sync.status){
+    case 'off': return '연결 안 됨';
+    case 'connecting': return '연결 중…';
+    case 'signedout': return '로그인 필요';
+    case 'syncing': return '동기화 중…';
+    case 'synced': return '동기화됨'+(Sync.email()?' · '+Sync.email():'');
+    case 'error': return '오류';
+    default: return '';
+  }
+}
+function syncStatusColor(){ const s=window.Sync?Sync.status:'off';
+  return s==='synced'?'var(--green)':s==='error'?'var(--danger)':(s==='syncing'||s==='connecting')?'var(--gold)':'var(--sub)'; }
+function renderSyncBanner(){
+  const el=$('sync-banner');
+  if(el){
+    if(!window.Sync||!Sync.configured()){ el.innerHTML=''; }
+    else if(Sync.status==='signedout'){
+      el.innerHTML=`<div class="card tight row"><div style="font-size:.86rem"><b>☁️ 기기 간 동기화</b><br><span class="tiny">로그인하면 폰·패드·PC가 같은 데이터를 공유해요</span></div><button class="btn primary sm" onclick="openSettings()">로그인</button></div>`;
+    } else if(Sync.status==='error'){
+      el.innerHTML=`<div class="card tight" style="background:var(--terra-soft);border-color:var(--terra-line)"><div style="font-size:.82rem;color:var(--terra-deep)">☁️ 동기화 오류 — ${esc(Sync.lastError||'')}</div><div class="tiny" style="margin-top:3px;color:#6E4a3a">로컬 저장은 정상이에요. 설정에서 다시 시도할 수 있어요.</div></div>`;
+    } else { el.innerHTML=''; }
+  }
+  const line=$('sync-status-line'); if(line){ line.textContent=syncStatusText(); line.style.color=syncStatusColor(); }
+}
+function renderSyncSection(){
+  if(!window.Sync) return '';
+  const configured=Sync.configured(), signedIn=Sync.signedIn();
+  let inner;
+  if(!configured){
+    inner=`<div class="tiny" style="margin-bottom:8px">Supabase 프로젝트를 만든 뒤 URL·anon key를 넣으면 기기 간 자동 동기화가 켜져요. (설정 방법은 README 참고)</div>
+      <div class="field"><label>Supabase URL</label><input id="sy-url" placeholder="https://xxxx.supabase.co"></div>
+      <div class="field"><label>anon key (public)</label><input id="sy-key" type="password" placeholder="eyJ… 로 시작"></div>
+      <button class="btn dark block" onclick="syncConnect()">연결</button>`;
+  } else if(!signedIn){
+    inner=`<div class="field"><label>이메일</label><input id="sy-email" type="email" placeholder="you@example.com" autocomplete="username"></div>
+      <div class="field"><label>비밀번호</label><input id="sy-pw" type="password" placeholder="6자 이상" autocomplete="current-password"></div>
+      <div class="grid2"><button class="btn primary" onclick="syncSignIn()">로그인</button><button class="btn ghost" onclick="syncSignUp()">회원가입</button></div>
+      <button class="btn ghost block" style="margin-top:8px;font-size:.8rem;color:var(--sub)" onclick="syncDisconnect()">이 기기 연결 해제</button>`;
+  } else {
+    inner=`<div class="row" style="margin-bottom:10px"><span class="muted" style="font-size:.85rem">${esc(Sync.email())}</span><button class="btn soft sm" onclick="syncNow()">지금 동기화</button></div>
+      <div class="grid2"><button class="btn ghost" onclick="syncSignOut()">로그아웃</button><button class="btn ghost" style="color:var(--danger)" onclick="syncDisconnect()">연결 해제</button></div>`;
+  }
+  return `<div class="card tight" style="margin-bottom:14px">
+    <div class="row" style="margin-bottom:8px"><b style="font-size:.92rem">☁️ 클라우드 동기화</b><span id="sync-status-line" style="font-size:.75rem;font-weight:700;color:${syncStatusColor()}">${syncStatusText()}</span></div>
+    ${inner}</div>`;
+}
+function syncConnect(){ const url=val('sy-url'),key=val('sy-key');
+  Sync.connect(url,key).then(()=>{toast('연결했어요 — 이제 로그인하세요');openSettings();}).catch(e=>toast(e.message||'연결 실패')); }
+function syncSignIn(){ const email=val('sy-email').trim(),pw=val('sy-pw');
+  if(!email||!pw){toast('이메일과 비밀번호를 입력해주세요');return}
+  toast('로그인 중…'); Sync.signIn(email,pw).then(()=>{toast('로그인했어요 — 동기화됩니다');openSettings();}).catch(e=>toast('로그인 실패 — '+(e.message||''))); }
+function syncSignUp(){ const email=val('sy-email').trim(),pw=val('sy-pw');
+  if(!email||pw.length<6){toast('이메일과 6자 이상 비밀번호를 입력해주세요');return}
+  toast('가입 중…'); Sync.signUp(email,pw).then(r=>{ toast(r&&r.needConfirm?'확인 메일을 보냈어요 — 인증 후 로그인하세요':'가입·로그인 완료 — 동기화됩니다'); openSettings(); }).catch(e=>toast('가입 실패 — '+(e.message||''))); }
+function syncSignOut(){ Sync.signOut().then(()=>{toast('로그아웃했어요');openSettings();}); }
+function syncDisconnect(){ if(!confirm('이 기기의 클라우드 연결을 해제할까요? 로컬 데이터는 그대로 남아요.'))return;
+  Sync.disconnect().then(()=>{toast('연결을 해제했어요');openSettings();}); }
+function syncNow(){ toast('동기화 중…'); Sync.syncNow().then(()=>toast('동기화했어요')); }
+
 /* ═════════ 시작 ═════════ */
 autoApplyFixed();
 recordScore();
 renderHome();
 autoFx();
+
+/* PWA: 서비스워커 등록 + 클라우드 동기화 부트스트랩 (defer 스크립트 이후에 실행) */
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{}); });
+}
+window.addEventListener('load',()=>{ if(window.Sync){ Sync.on(renderSyncBanner); Sync.init(); renderSyncBanner(); } });
 </script>
 </body>
 </html>
