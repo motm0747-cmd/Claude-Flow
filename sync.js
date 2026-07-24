@@ -275,6 +275,35 @@
       return this.pull(true);
     },
 
+    /* ─────────────────────────── 버전 복원(타임머신) ─────────────────────────── */
+    // 서버의 flow_state_history(최근 30개 자동 백업) 목록/복원. (schema.sql 필요)
+    listVersions: function () {
+      if (!this.session || !this.client) return Promise.resolve({ error: 'not-signed-in', data: null });
+      return this.client.from('flow_state_history')
+        .select('id,rev,saved_at')
+        .eq('user_id', this.session.user.id)
+        .order('id', { ascending: false })
+        .limit(30);
+    },
+    restoreVersion: function (id) {
+      var self = this;
+      if (!this.session || !this.client) return Promise.reject(new Error('로그인이 필요해요'));
+      return this.client.from('flow_state_history')
+        .select('data,rev')
+        .eq('user_id', this.session.user.id)
+        .eq('id', id)
+        .maybeSingle()
+        .then(function (res) {
+          if (res.error) throw res.error;
+          if (!res.data) throw new Error('그 버전을 찾을 수 없어요');
+          self.backupLocal(self.readLocal());              // 현재 상태 먼저 백업
+          try { localStorage.setItem(DATA_KEY, JSON.stringify(res.data.data)); } catch (e) {}
+          if (typeof window.reloadStateFromStorage === 'function') { try { window.reloadStateFromStorage(); } catch (e) {} }
+          self.dirty = true;
+          return self.push(true);                          // 복원본을 새 버전으로 업로드
+        });
+    },
+
     _msg: function (e) {
       if (!e) return '알 수 없는 오류';
       return e.message || e.error_description || (typeof e === 'string' ? e : JSON.stringify(e));

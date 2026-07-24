@@ -15,8 +15,10 @@
 <meta name="apple-mobile-web-app-title" content="Claude Flow">
 <meta name="mobile-web-app-capable" content="yes">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<script>/* 첫 페인트 전에 테마 적용(깜빡임 방지) */try{var _p=localStorage.getItem('claudeflow_theme')||'system';var _d=_p==='dark'||(_p==='system'&&window.matchMedia&&matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.dataset.theme=_d?'dark':'light';}catch(e){}</script>
 <style>
 :root{
+  color-scheme:light;
   --bg:#FAF9F5; --surface:#FFFFFF; --ink:#3D3929; --sub:#8A8478; --faint:#B5AFA2;
   --line:#EAE7DD; --line2:#DFDBCE;
   --terra:#D97757; --terra-deep:#C05B3C; --terra-soft:#F9EFE9; --terra-line:#EDCDBE;
@@ -27,6 +29,31 @@
   --r:18px; --r-sm:12px;
   --shadow:0 1px 2px rgba(61,57,41,.04), 0 4px 16px rgba(61,57,41,.05);
 }
+
+/* ══════════ 다크 모드 ══════════ */
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#1B1917; --surface:#252220; --ink:#ECE6DA; --sub:#A49C8C; --faint:#736B5D;
+  --line:#332F2A; --line2:#3E3931;
+  --terra:#DE8163; --terra-deep:#EAA184; --terra-soft:#3A2A22; --terra-line:#4E382C;
+  --green:#84B189; --green-soft:#26302A;
+  --gold:#CDA85B; --gold-soft:#332C1E;
+  --blue:#89A7C4; --blue-soft:#232D36;
+  --danger:#E0715C;
+  --shadow:0 1px 2px rgba(0,0,0,.25), 0 6px 20px rgba(0,0,0,.30);
+}
+/* 하드코딩된 밝은 배경들을 다크에서 덮기 */
+[data-theme="dark"] .badge.gray,
+[data-theme="dark"] .gauge-track,
+[data-theme="dark"] .top3 .bar-track,
+[data-theme="dark"] .sd-row .bar,
+[data-theme="dark"] .seg{background:#2E2A24}
+[data-theme="dark"] .hm-cell{background:#2A2620}
+[data-theme="dark"] .sheet-head .x{background:#332F29}
+[data-theme="dark"] .ai-box{background:linear-gradient(180deg,#2A231E,#241F1B)}
+[data-theme="dark"] .tabbar{background:rgba(27,25,23,.92)}
+[data-theme="dark"] .banner{border-color:#4A4030}
+[data-theme="dark"] .seg button.on{background:#403A31;box-shadow:0 1px 3px rgba(0,0,0,.45)}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html{font-size:16px}
 body{
@@ -84,7 +111,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
 .btn{border:none;border-radius:12px;padding:11px 16px;font-size:.9rem;font-weight:700;cursor:pointer;font-family:inherit;transition:opacity .15s}
 .btn:active{opacity:.75}
 .btn.primary{background:var(--terra);color:#fff}
-.btn.dark{background:var(--ink);color:#fff}
+.btn.dark{background:var(--ink);color:var(--bg)}
 .btn.ghost{background:var(--surface);border:1px solid var(--line2);color:var(--ink)}
 .btn.soft{background:var(--terra-soft);color:var(--terra-deep)}
 .btn.sm{padding:7px 12px;font-size:.8rem;border-radius:10px}
@@ -144,7 +171,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
 .rep-month{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;scrollbar-width:none}
 .rep-month::-webkit-scrollbar{display:none}
 .rm-chip{flex-shrink:0;padding:8px 14px;border-radius:99px;border:1px solid var(--line2);background:var(--surface);font-size:.82rem;font-weight:700;cursor:pointer;color:var(--sub)}
-.rm-chip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.rm-chip.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 .headline{font-family:ui-serif,Georgia,serif;font-size:1.3rem;font-weight:700;line-height:1.35;letter-spacing:-0.015em}
 .stat3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:14px}
 .stat3 .cell{background:var(--bg);border-radius:var(--r-sm);padding:10px 12px}
@@ -208,7 +235,7 @@ textarea{resize:vertical;min-height:70px}
 
 /* ── misc ── */
 .view{display:none}.view.on{display:block}
-#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(140px + env(safe-area-inset-bottom));background:var(--ink);color:#fff;padding:10px 18px;border-radius:99px;font-size:.85rem;font-weight:600;opacity:0;transition:opacity .25s;pointer-events:none;z-index:60;white-space:nowrap}
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(140px + env(safe-area-inset-bottom));background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:99px;font-size:.85rem;font-weight:600;opacity:0;transition:opacity .25s;pointer-events:none;z-index:60;white-space:nowrap}
 #toast.show{opacity:1}
 .banner{display:flex;align-items:center;gap:12px;background:var(--gold-soft);border:1px solid #E7DCBB;border-radius:var(--r);padding:14px 16px;margin-bottom:14px}
 .banner .b-main{flex:1;font-size:.86rem;font-weight:600}
@@ -2689,6 +2716,7 @@ function renderProfile(){
 function openSettings(){
   openModal(`${sheetHead('설정')}
     ${renderSyncSection()}
+    ${renderThemeSection()}
     <div class="field"><label>Gemini API 키 (무료)</label>
       <input id="st-key" type="password" placeholder="AIza…" value="${esc(S.settings.gemini)}">
       <div class="tiny" style="margin-top:5px">Google AI Studio(aistudio.google.com)에서 무료 발급 → 리포트 AI 해설과 맞춤 코칭이 켜져요. 키는 이 기기에만 저장됩니다.</div>
@@ -2703,6 +2731,7 @@ function openSettings(){
       <button class="btn ghost" onclick="$('st-file').click()">가져오기</button>
     </div>
     <input type="file" id="st-file" accept=".json" style="display:none" onchange="importData(this)">
+    <button class="btn ghost block" style="margin-top:10px" onclick="openVersionsModal()">⏱️ 버전 복원 (타임머신)</button>
     <div class="divider"></div>
     <button class="btn ghost block" style="color:var(--danger)" onclick="if(confirm('모든 데이터를 삭제할까요? 되돌릴 수 없어요.')){localStorage.removeItem(KEY);location.reload()}">전체 초기화</button>
     <div class="tiny" style="text-align:center;margin-top:14px">Claude Flow · 클라우드 동기화를 켜지 않으면 데이터는 이 기기에만 저장됩니다</div>`);
@@ -2741,6 +2770,28 @@ function importData(input){
   };
   r.readAsText(f);
 }
+
+/* ═════════ 테마(다크 모드) ═════════ */
+const THEME_KEY='claudeflow_theme';
+function themePref(){ try{return localStorage.getItem(THEME_KEY)||'system'}catch(e){return 'system'} }
+function applyTheme(){
+  const pref=themePref();
+  const dark = pref==='dark' || (pref==='system' && window.matchMedia && matchMedia('(prefers-color-scheme:dark)').matches);
+  document.documentElement.dataset.theme = dark?'dark':'light';
+  const m=document.querySelector('meta[name="theme-color"]'); if(m) m.setAttribute('content', dark?'#1B1917':'#FAF9F5');
+}
+function setTheme(p){
+  try{localStorage.setItem(THEME_KEY,p)}catch(e){}
+  applyTheme();
+  const sh=$('sheet'); // 설정 모달이 열려 있으면 활성 표시 갱신
+  if(sh && $('modal') && $('modal').classList.contains('open') && sh.innerHTML.indexOf('화면 테마')>=0) openSettings();
+}
+function renderThemeSection(){
+  const p=themePref(), b=(v,l)=>`<button class="${p===v?'on':''}" onclick="setTheme('${v}')">${l}</button>`;
+  return `<div class="field" style="margin-bottom:14px"><label>화면 테마</label><div class="seg">${b('system','시스템')}${b('light','라이트')}${b('dark','다크')}</div></div>`;
+}
+if(window.matchMedia){ try{ matchMedia('(prefers-color-scheme:dark)').addEventListener('change',()=>{ if(themePref()==='system') applyTheme(); }); }catch(e){} }
+applyTheme();
 
 /* ═════════ 클라우드 동기화 UI (window.Sync 엔진은 sync.js) ═════════ */
 // 클라우드에서 새 데이터를 채택했을 때 메모리 상태를 다시 읽어 화면 갱신
@@ -2805,6 +2856,31 @@ function syncSignOut(){ Sync.signOut().then(()=>{toast('로그아웃했어요');
 function syncDisconnect(){ if(!confirm('이 기기의 클라우드 연결을 해제할까요? 로컬 데이터는 그대로 남아요.'))return;
   Sync.disconnect().then(()=>{toast('연결을 해제했어요');openSettings();}); }
 function syncNow(){ toast('동기화 중…'); Sync.syncNow().then(()=>toast('동기화했어요')); }
+
+/* ═════════ 버전 복원(타임머신) ═════════ */
+function openVersionsModal(){
+  if(!window.Sync || !Sync.signedIn()){ toast('클라우드 로그인 후 사용할 수 있어요'); return; }
+  openModal(`${sheetHead('타임머신 · 버전 복원')}
+    <div id="ver-list" class="muted" style="text-align:center;padding:20px 0">불러오는 중…</div>
+    <div class="tiny" style="margin-top:8px;text-align:center">저장할 때마다 자동으로 남는 최근 백업이에요. 복원해도 현재 상태는 먼저 백업됩니다.</div>`);
+  Sync.listVersions().then(res=>{
+    const el=$('ver-list'); if(!el) return;
+    if(!res || res.error){ el.innerHTML=`<div class="tiny">아직 버전 기록을 켜지 않았어요.<br>Supabase에서 백업 테이블 SQL(README의 schema.sql)을 실행하면 여기에 쌓여요.</div>`; return; }
+    const rows=res.data||[];
+    if(!rows.length){ el.innerHTML=`<div class="tiny">아직 저장된 버전이 없어요. 몇 번 기록하면 여기 쌓여요.</div>`; return; }
+    el.classList.remove('muted'); el.style.padding='0'; el.style.textAlign='left';
+    el.innerHTML=rows.map(r=>{
+      const d=new Date(r.saved_at);
+      const label=`${d.getFullYear()}.${pad(d.getMonth()+1)}.${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      return `<div class="tx"><div class="t-main"><div class="t-name num">${label}</div><div class="t-sub">버전 ${r.rev}</div></div><button class="btn ghost sm" onclick="restoreVersion(${r.id})">복원</button></div>`;
+    }).join('');
+  }).catch(()=>{ const el=$('ver-list'); if(el)el.innerHTML=`<div class="tiny">목록을 불러오지 못했어요.</div>`; });
+}
+function restoreVersion(id){
+  if(!confirm('이 시점으로 되돌릴까요? 지금 상태는 자동으로 백업돼요.'))return;
+  toast('복원 중…');
+  Sync.restoreVersion(id).then(()=>{ toast('복원했어요'); closeModal(); }).catch(e=>toast('복원 실패 — '+(e.message||'')));
+}
 
 /* ═════════ 시작 ═════════ */
 autoApplyFixed();
