@@ -219,6 +219,31 @@ details.acc summary{padding:15px 16px;font-weight:800;font-size:.92rem;cursor:po
 details.acc summary::-webkit-details-marker{display:none}
 details.acc .acc-body{padding:0 16px 14px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ══ 넓은 화면 (태블릿·PC) — 2단 대시보드 ══ */
+@media (min-width:1024px){
+  #app{max-width:1040px;padding-left:26px;padding-right:26px}
+  /* 카드가 쌓이는 뷰를 2단(masonry)으로 흐르게 */
+  #view-home,#view-assets,#card-list{column-count:2;column-gap:20px}
+  #view-home>*,#view-assets>*,#card-list>*{break-inside:avoid;-webkit-column-break-inside:avoid}
+  .sec-title{break-after:avoid}
+  /* 전체 폭을 차지해야 자연스러운 요소 (순자산 히어로·알림 배너) */
+  .hero,#storage-banner,#sync-banner,#brief-slot,#report-banner,#dca-banner,#perf-banner,#warn-slot{
+    column-span:all;-webkit-column-span:all}
+  /* 단일 컬럼이 자연스러운 뷰(캘린더·리포트)는 가운데 정렬로 폭 제한 */
+  #view-cal,#view-report{max-width:780px;margin-left:auto;margin-right:auto}
+  /* FAB: 넓은 콘텐츠 오른쪽 끝(초광폭) 또는 화면 모서리에 */
+  .fab{right:max(24px,calc(50% - 636px));bottom:32px}
+  /* 모달을 화면 중앙 다이얼로그로 */
+  .overlay{align-items:center}
+  .sheet{border-radius:22px;max-height:86vh;box-shadow:0 24px 70px rgba(41,38,27,.28)}
+}
+/* ══ 초광폭 (16인치+ 노트북) — 3단 ══ */
+@media (min-width:1500px){
+  #app{max-width:1320px}
+  #view-home,#view-assets,#card-list{column-count:3}
+  .fab{right:max(24px,calc(50% - 676px))}
+}
 /* ── 시뮬레이터 ── */
 .sim-controls{margin-top:14px}
 .slider-row{margin:14px 0}

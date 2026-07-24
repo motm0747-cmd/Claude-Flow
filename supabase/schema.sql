@@ -73,3 +73,20 @@ drop trigger if exists trg_flow_state_snapshot on public.flow_state;
 create trigger trg_flow_state_snapshot
   after insert or update on public.flow_state
   for each row execute function public.flow_state_snapshot();
+
+-- ══════════════════════════════════════════════════════════════════════
+-- 실시간 동기화(Realtime) 켜기
+-- 다른 기기가 저장하면 그 즉시 이 기기로 받아오게 하려면
+-- flow_state 테이블을 realtime 발행 목록에 넣어야 한다. (한 번만 실행, 중복 안전)
+-- ══════════════════════════════════════════════════════════════════════
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'flow_state'
+  ) then
+    execute 'alter publication supabase_realtime add table public.flow_state';
+  end if;
+end $$;

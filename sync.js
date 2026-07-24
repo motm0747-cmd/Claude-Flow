@@ -31,6 +31,7 @@
     knownRev: 0,
     dirty: false,
     _timer: null,
+    realtimeChannel: null,
     // off | connecting | signedout | syncing | synced | error
     status: 'off',
     lastError: '',
@@ -76,12 +77,12 @@
         });
         this.client.auth.onAuthStateChange(function (_evt, session) {
           self.session = session;
-          if (session) { self.pull(true); }
-          else { self.setStatus('signedout'); }
+          if (session) { self.pull(true); self._subscribeRealtime(); }
+          else { self._unsubscribeRealtime(); self.setStatus('signedout'); }
         });
         this.client.auth.getSession().then(function (res) {
           self.session = (res && res.data) ? res.data.session : null;
-          if (self.session) { self.pull(true); }
+          if (self.session) { self.pull(true); self._subscribeRealtime(); }
           else { self.setStatus('signedout'); }
         }).catch(function (e) { self.setStatus('error', self._msg(e)); });
 
@@ -104,8 +105,12 @@
     },
 
     connect: function (url, anonKey) {
-      url = (url || '').trim().replace(/\/+$/, '');
-      anonKey = (anonKey || '').trim();
+      url = (url || '').trim()
+        .replace(/^[A-Za-z_]+\s*=\s*/, '')     // 'SUPABASE_URL=' 같은 접두어 제거
+        .replace(/^["']|["']$/g, '').trim();   // 감싼 따옴표 제거
+      // 순수 프로젝트 URL(origin)만 남김 → '/rest/v1/' 등 꼬리 경로 자동 제거
+      try { url = new URL(url).origin; } catch (e) { url = url.replace(/\/+$/, ''); }
+      anonKey = (anonKey || '').trim().replace(/^["']|["']$/g, '');
       if (!/^https:\/\/.+/.test(url)) return Promise.reject(new Error('올바른 Supabase URL(https://…)을 입력해주세요.'));
       if (anonKey.length < 20) return Promise.reject(new Error('anon key 를 다시 확인해주세요.'));
       this.saveCfg({ url: url, anonKey: anonKey });
@@ -141,6 +146,7 @@
 
     signOut: function () {
       var self = this;
+      this._unsubscribeRealtime();
       if (!this.client) { this.session = null; this.setStatus('signedout'); return Promise.resolve(); }
       return this.client.auth.signOut().then(function () {
         self.session = null; self.setStatus('signedout');
@@ -150,6 +156,7 @@
     disconnect: function () {
       // 로그아웃 + 이 기기의 연결 설정 제거(로컬 데이터는 그대로 둔다)
       var self = this;
+      this._unsubscribeRealtime();
       var done = function () { self.clearCfg(); self.client = null; self.session = null; self.knownRev = 0; try { localStorage.removeItem(REV_KEY); } catch (e) {} self.setStatus('off'); };
       if (this.client) return this.client.auth.signOut().then(done).catch(done);
       done(); return Promise.resolve();
@@ -200,6 +207,32 @@
         try { window.reloadStateFromStorage(); } catch (e) {}
       }
       this.setStatus('synced');
+    },
+
+    /* ─────────────────────────── 실시간(Realtime) ─────────────────────────── */
+    // 다른 기기가 클라우드에 저장하면 그 즉시 이 기기로 받아온다.
+    // (Supabase에서 flow_state 테이블 realtime 을 켜야 동작 — schema.sql 참고)
+    _subscribeRealtime: function () {
+      if (!this.client || !this.session || this.realtimeChannel) return;
+      var self = this, uid = this.session.user.id;
+      try {
+        this.realtimeChannel = this.client
+          .channel('flow_state_' + uid)
+          .on('postgres_changes',
+            { event: '*', schema: 'public', table: 'flow_state', filter: 'user_id=eq.' + uid },
+            function (payload) {
+              var r = (payload && payload.new && typeof payload.new.rev === 'number') ? payload.new.rev : Infinity;
+              // 내가 방금 올린 변경(같은 rev)은 무시. 더 큰 rev면 다른 기기 → 받아오기.
+              if (r > self.knownRev) self.pull(true);
+            })
+          .subscribe();
+      } catch (e) { /* realtime 실패해도 앱·동기화는 정상 */ }
+    },
+    _unsubscribeRealtime: function () {
+      if (this.realtimeChannel && this.client) {
+        try { this.client.removeChannel(this.realtimeChannel); } catch (e) {}
+      }
+      this.realtimeChannel = null;
     },
 
     /* ─────────────────────────── 올리기(push) ─────────────────────────── */
