@@ -64,6 +64,44 @@ function computeDigest(data: any) {
     if (gap >= 3) items.push({ emo: "✍️", title: "기록이 뜸해요", detail: `${gap}일째 새 내역이 없어요`, kind: "inactive" });
   }
 
+  // 4) 예산 80% 경고 — 실행형
+  const ym = today.slice(0, 7);
+  const budget = data?.budgets?.[ym];
+  if (budget?.total > 0) {
+    let mExp = 0;
+    for (const t of tx) if (t?.type === "expense" && t.date?.slice(0, 7) === ym) mExp += (+t.amount || 0);
+    const pct = Math.round(mExp / budget.total * 100);
+    if (pct >= 80) {
+      items.push({
+        emo: pct >= 100 ? "🔴" : "🟡",
+        title: pct >= 100 ? "예산을 초과했어요" : "예산 80% 도달",
+        detail: `${won(mExp)} / ${won(budget.total)} (${pct}%)`,
+        kind: "budget",
+      });
+    }
+  }
+
+  // 5) 카드 실적 마감 임박(월말 5일 이내)인데 미달 — 실행형
+  const dim = new Date(Date.UTC(Y, M, 0)).getUTCDate();
+  if (dim - D <= 5) {
+    for (const c of (Array.isArray(data?.cards) ? data.cards : [])) {
+      const target = c?.target || (Array.isArray(c?.tiers) && c.tiers.length ? Math.min(...c.tiers) : 0);
+      if (!target || c?.type !== "credit") continue;
+      let spend = 0;
+      for (const t of tx) {
+        if (t?.type === "expense" && t.payKind === "card" && t.payId === c.id && t.date?.slice(0, 7) === ym) {
+          if (!t.noPerf && !(Array.isArray(c.exclCats) && c.exclCats.includes(t.cat))) spend += (+t.amount || 0);
+        }
+      }
+      if (spend < target) {
+        items.push({
+          emo: "💳", title: `${c.name || "카드"} 실적 미달`,
+          detail: `${won(target - spend)} 더 필요 (마감 ${dim - D}일 전)`, kind: "card",
+        });
+      }
+    }
+  }
+
   return { date: today, items, computedAt: new Date().toISOString() };
 }
 
@@ -96,7 +134,10 @@ Deno.serve(async (req: Request) => {
       if (!upErr) updated++;
 
       if (!canPush) continue;
-      const actionable = digest.items.filter((i) => i.kind === "fixed" || i.kind === "inactive");
+      // 사용자가 켠 알림 종류만 발송 (S.notify — 값이 없으면 기본 ON)
+      const pref = (row.data?.notify || {}) as Record<string, boolean>;
+      const wants = (k: string) => pref[k] !== false;
+      const actionable = digest.items.filter((i) => i.kind !== "week" && wants(i.kind));
       if (!actionable.length) continue;
 
       const { data: subs } = await admin.from("push_subscriptions")

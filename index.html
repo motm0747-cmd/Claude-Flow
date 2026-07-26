@@ -457,6 +457,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
       </div>
     </div>
 
+    <div class="card tight" id="quick-card"></div>
     <div class="card tight" id="budget-card"></div>
     <div class="card tight" id="anomaly-card"></div>
     <div class="card tight" id="smart-gauge"></div>
@@ -647,6 +648,9 @@ function migrate(){
   if(S.settings.simHorizon===undefined)S.settings.simHorizon=12;
   S.debts=S.debts||[]; S.budgets=S.budgets||{}; S.briefs=S.briefs||{}; S.anomAck=S.anomAck||[];
   S.wish=S.wish||[]; S.recon=S.recon||[]; S.scores=S.scores||{};
+  S.cats=S.cats||null;              // 커스텀 카테고리 (null이면 기본값)
+  S.quick=S.quick||[];              // 빠른 입력 즐겨찾기
+  S.notify=S.notify||{budget:true,card:true,fixed:true,inactive:true}; // 알림 종류
   S.fixed.forEach(f=>{ if(!f.kind)f.kind='expense'; if(f.from===undefined)f.from=''; if(f.to===undefined)f.to=''; });
   S.cards.forEach(c=>{ if(c.annualFee===undefined)c.annualFee=0; });
   if(!S.settings.fx)S.settings.fx={usdkrw:1380,at:'',auto:true};
@@ -682,10 +686,25 @@ function checkAmt(v,label){
 }
 
 /* ═════════ 상수 ═════════ */
-const EXP_CATS=[['🍚','식비'],['☕','카페/간식'],['🚇','교통'],['🛍️','쇼핑'],['🎬','문화/여가'],['📚','교육'],['📱','통신'],['🔄','구독'],['💊','의료'],['✈️','여행'],['🎁','경조사'],['🏠','주거'],['🏋️','운동'],['💸','기타']];
-const INC_CATS=[['📖','과외'],['🧑‍💼','아르바이트'],['💌','용돈'],['🎓','장학금'],['📈','투자수익'],['🏦','이자'],['📦','판매수익'],['💰','환급'],['🎉','상금'],['💵','기타수입']];
-const CAT_EMO=Object.fromEntries([...EXP_CATS,...INC_CATS].map(([e,n])=>[n,e]));
-CAT_EMO['청구할인']='🎁';
+// 기본 카테고리 (사용자가 추가/수정한 건 S.cats 에 저장 — 아래 EXP_CATS/INC_CATS 는 둘을 합친 결과)
+const DEF_EXP_CATS=[['🍚','식비'],['☕','카페/간식'],['🚇','교통'],['🛍️','쇼핑'],['🎬','문화/여가'],['📚','교육'],['📱','통신'],['🔄','구독'],['💊','의료'],['✈️','여행'],['🎁','경조사'],['🏠','주거'],['🏋️','운동'],['💸','기타']];
+const DEF_INC_CATS=[['📖','과외'],['🧑‍💼','아르바이트'],['💌','용돈'],['🎓','장학금'],['📈','투자수익'],['🏦','이자'],['📦','판매수익'],['💰','환급'],['🎉','상금'],['💵','기타수입']];
+// S.cats = { exp:[[emo,name],…], inc:[[emo,name],…] } — 없으면 기본값 사용
+function catList(kind){
+  const c=S.cats&&S.cats[kind];
+  if(Array.isArray(c)&&c.length) return c.map(x=>[x[0]||'💸',x[1]]);
+  return kind==='inc'?DEF_INC_CATS.slice():DEF_EXP_CATS.slice();
+}
+// 기존 코드가 EXP_CATS/INC_CATS/CAT_EMO 를 그대로 쓰므로, 접근 시마다 최신 목록을 반환하게 함
+Object.defineProperty(window,'EXP_CATS',{get:()=>catList('exp')});
+Object.defineProperty(window,'INC_CATS',{get:()=>catList('inc')});
+Object.defineProperty(window,'CAT_EMO',{get:()=>{
+  const m=Object.fromEntries([...catList('exp'),...catList('inc')].map(([e,n])=>[n,e]));
+  m['청구할인']='🎁';
+  // 이미 기록된 내역의 카테고리가 목록에서 지워졌더라도 이모지가 깨지지 않게 기본값 보강
+  [...DEF_EXP_CATS,...DEF_INC_CATS].forEach(([e,n])=>{ if(!m[n])m[n]=e; });
+  return m;
+}});
 const ACC_META={
   checking:{emo:'💳',label:'입출금',bg:'var(--blue-soft)'},
   deposit:{emo:'🏦',label:'예금',bg:'var(--green-soft)'},
@@ -1023,6 +1042,7 @@ function renderHome(){
   $('report-banner').innerHTML = showBanner?
     `<div class="banner"><div class="b-main">📊 ${ymLabel(pm)} 리포트가 아직 없어요</div><button class="btn dark sm" onclick="goMakeReport('${pm}')">만들기</button></div>`:'';
   renderBrief();
+  renderQuick();
   renderBudget();
   renderWish();
   renderAnomaly();
@@ -1264,6 +1284,7 @@ function renderTxModal(){
     ${payOpts}
     <div class="field"><label>메모</label><input id="tx-memo" placeholder="예: 학식, 스터디카페" value="${esc(d.memo)}"></div>
     ${d.type==='expense'?`<div class="field"><label class="cb-row"><input type="checkbox" id="tx-def" ${d.defended?'checked':''}><span>계획된 지출 (과소비 경고에서 제외)</span></label></div>`:''}
+    ${(isEdit&&d.type==='expense')?`<button class="btn ghost sm block" style="margin-bottom:8px" onclick="addQuickFromTx('${d.id}')">⚡ 빠른 입력에 추가</button>`:''}
     <div style="display:flex;gap:8px;margin-top:6px">
       ${isEdit?`<button class="btn ghost" style="flex:1" onclick="delTx('${d.id}')">삭제</button>`:''}
       <button class="btn primary" style="flex:2" onclick="saveTx()">${isEdit?'수정':'저장'}</button>
@@ -2519,7 +2540,26 @@ function delDebt(id){
 }
 
 /* ═════════ v4-2: 월간 예산 + 페이스 분석 ═════════ */
-const budgetOf=ym=>S.budgets[ym]||null;
+/* 예산 조회 — rollover(이월)가 켜져 있으면 지난달 남은/초과분을 총액에 반영 */
+function budgetOf(ym){
+  const b=S.budgets[ym]; if(!b)return null;
+  if(!b.rollover) return b;
+  const carry=budgetCarry(ym);
+  return {...b, total:Math.max(0,(b.total||0)+carry), baseTotal:b.total||0, carry};
+}
+// 지난달 이월액: (지난달 예산 − 지난달 실제 지출). 남으면 +, 초과하면 −
+function budgetCarry(ym){
+  const pm=prevYM(ym), pb=S.budgets[pm];
+  if(!pb||!pb.total)return 0;
+  const prevTotal=pb.rollover?Math.max(0,(pb.total||0)+budgetCarryRaw(pm)):(pb.total||0);
+  return Math.round(prevTotal-totals(pm).exp);
+}
+// 이월 계산이 무한 재귀하지 않게 한 단계만 거슬러 올라감
+function budgetCarryRaw(ym){
+  const pm=prevYM(ym), pb=S.budgets[pm];
+  if(!pb||!pb.total)return 0;
+  return Math.round((pb.total||0)-totals(pm).exp);
+}
 function budgetPace(ym){
   const b=budgetOf(ym); if(!b||!b.total)return null;
   const day=(ym===thisYM())?new Date().getDate():daysIn(ym);
@@ -2551,6 +2591,7 @@ function renderBudget(){
       <button class="btn ghost sm" onclick="openBudgetModal()">수정</button></div>
     <div class="row" style="margin-bottom:6px"><span class="num" style="font-weight:800;color:${col}">${fmt(p.spent)}</span>
       <span class="tiny num">/ ${fmt(p.total)} (${p.pct.toFixed(0)}%)</span></div>
+    ${(b.rollover&&b.carry)?`<div class="tiny" style="margin:-2px 0 6px">↩︎ 이월 ${b.carry>=0?'+':'−'}${fmtK(Math.abs(b.carry))}원 포함 (기본 ${fmtK(b.baseTotal)}원)</div>`:''}
     <div class="bd-track"><div class="bd-fill" style="width:${Math.min(100,p.pct)}%;background:${col}"></div><div class="bd-pace" style="left:${Math.min(100,p.pacePct)}%"></div></div>
     <div class="tiny" style="margin-top:7px">${verdict}</div>
     <div class="tiny" style="margin-top:3px">▍표시선은 오늘까지의 정상 페이스 · 남은 ${Math.max(0,p.dim-p.day)}일 동안 하루 <b class="num">${fmt(p.dailyLeft)}</b>까지 쓸 수 있어요</div>
@@ -2561,8 +2602,8 @@ function renderBudget(){
 }
 let bdDraft=null;
 function openBudgetModal(){
-  const ym=thisYM(), b=budgetOf(ym);
-  bdDraft=b?JSON.parse(JSON.stringify(b)):{total:0,cats:{}};
+  const ym=thisYM(), b=S.budgets[ym];   // 편집은 항상 '원래 입력한 총액'으로 (이월분 제외)
+  bdDraft=b?JSON.parse(JSON.stringify(b)):{total:0,cats:{},rollover:false};
   renderBudgetModal();
 }
 function renderBudgetModal(){
@@ -2582,12 +2623,18 @@ function renderBudgetModal(){
         <div class="field" style="margin-bottom:0"><input type="number" inputmode="numeric" id="bd-cval" placeholder="금액"></div>
       </div>
       <button class="btn soft sm block" style="margin-top:7px" onclick="addBdCat()">＋ 카테고리 예산 추가</button></div>
+    <div class="field"><label style="display:flex;gap:8px;align-items:center;cursor:pointer">
+        <input type="checkbox" id="bd-roll" style="width:auto" ${bdDraft.rollover?'checked':''} onchange="syncBd();renderBudgetModal()"> 지난달 남은 예산 이월</label>
+      <div class="tiny" style="margin-top:4px">${(()=>{const c=budgetCarry(ym);
+        if(!S.budgets[pm]||!S.budgets[pm].total)return '지난달 예산 기록이 없어 이월할 금액이 없어요.';
+        return c>=0?`지난달 예산이 <b class="pos">${fmt(c)}</b> 남았어요 → 켜면 이번 달 예산에 더해져요.`
+                   :`지난달 예산을 <b class="neg">${fmt(Math.abs(c))}</b> 초과했어요 → 켜면 이번 달 예산에서 차감돼요.`;})()}</div></div>
     <div style="display:flex;gap:8px;margin-top:6px">
       ${budgetOf(ym)?`<button class="btn ghost" style="flex:1" onclick="delBudget()">삭제</button>`:''}
       <button class="btn primary" style="flex:2" onclick="saveBudget()">저장</button>
     </div>`);
 }
-function syncBd(){const t=$('bd-total');if(t)bdDraft.total=Math.round(+t.value||0)}
+function syncBd(){const t=$('bd-total');if(t)bdDraft.total=Math.round(+t.value||0);const r=$('bd-roll');if(r)bdDraft.rollover=r.checked}
 function addBdCat(){
   syncBd();
   const c=$('bd-cat').value, v=Math.round(+$('bd-cval').value||0);
@@ -2598,7 +2645,7 @@ function rmBdCat(c){syncBd();delete bdDraft.cats[c];renderBudgetModal()}
 function saveBudget(){
   syncBd();
   if(!bdDraft.total||bdDraft.total<=0)return toast('총 예산을 입력해주세요');
-  S.budgets[thisYM()]={total:bdDraft.total,cats:bdDraft.cats||{}};
+  S.budgets[thisYM()]={total:bdDraft.total,cats:bdDraft.cats||{},rollover:!!bdDraft.rollover};
   commit('예산을 저장했어요');
 }
 function delBudget(){
@@ -3431,7 +3478,12 @@ function openSettings(){
   openModal(`${sheetHead('설정')}
     ${renderSyncSection()}
     ${renderPushSection()}
+    ${(window.Sync&&Sync.signedIn&&Sync.signedIn())?renderNotifySection():''}
     ${renderThemeSection()}
+    <div class="grid2" style="margin-bottom:14px">
+      <button class="btn ghost" onclick="openCatModal('exp')">🗂️ 카테고리 관리</button>
+      <button class="btn ghost" onclick="openFixCheckModal()">🩺 데이터 점검</button>
+    </div>
     <div class="field"><label>Gemini API 키 ${(window.Sync&&Sync.aiReady&&Sync.aiReady())?'(선택 · 클라우드 로그인 시 불필요)':'(무료)'}</label>
       <input id="st-key" type="password" placeholder="AIza…" value="${esc(S.settings.gemini)}">
       <div class="tiny" style="margin-top:5px">${(window.Sync&&Sync.aiReady&&Sync.aiReady())?'☁️ 클라우드에 로그인돼 있어 <b>서버에 등록된 키</b>로 AI가 동작해요 — 이 칸은 비워둬도 됩니다.':'Google AI Studio(aistudio.google.com)에서 무료 발급 → 리포트 AI 해설이 켜져요. 키는 이 기기에만 저장됩니다.'}</div>
@@ -3485,6 +3537,187 @@ function importData(input){
     }
   };
   r.readAsText(f);
+}
+
+/* ═════════ 커스텀 카테고리 관리 ═════════ */
+let catKind='exp';
+function openCatModal(kind){ catKind=kind||'exp'; renderCatModal(); }
+function renderCatModal(){
+  const list=catList(catKind), other=catKind==='exp'?'inc':'exp';
+  const used=c=>S.tx.filter(t=>t.cat===c).length;
+  openModal(`${sheetHead('카테고리 관리')}
+    <div class="seg" style="margin-bottom:12px">
+      <button class="${catKind==='exp'?'on':''}" onclick="openCatModal('exp')">지출</button>
+      <button class="${catKind==='inc'?'on':''}" onclick="openCatModal('inc')">수입</button></div>
+    ${list.map((c,i)=>`<div class="row" style="padding:7px 10px;background:var(--bg);border-radius:10px;margin-bottom:6px;gap:6px">
+      <input value="${esc(c[0])}" id="ct-e-${i}" style="width:46px;text-align:center;padding:6px" maxlength="4">
+      <input value="${esc(c[1])}" id="ct-n-${i}" style="flex:1;padding:6px">
+      <button class="btn ghost sm" onclick="moveCat(${i},-1)" ${i===0?'disabled':''}>↑</button>
+      <button class="btn ghost sm" onclick="moveCat(${i},1)" ${i===list.length-1?'disabled':''}>↓</button>
+      <button class="btn ghost sm" style="color:var(--danger)" onclick="rmCat(${i})">✕</button>
+    </div>`).join('')}
+    <div class="grid2" style="margin-top:8px">
+      <div class="field" style="margin-bottom:0"><label>이모지</label><input id="ct-new-e" placeholder="🐶" maxlength="4"></div>
+      <div class="field" style="margin-bottom:0"><label>이름</label><input id="ct-new-n" placeholder="반려동물"></div>
+    </div>
+    <button class="btn soft sm block" style="margin-top:8px" onclick="addCat()">＋ 카테고리 추가</button>
+    <div class="tiny" style="margin:10px 2px">💡 이름을 바꾸면 기존 내역도 함께 바뀌어요. 삭제는 사용 중이 아닐 때만 가능해요.
+      ${list.map((c,i)=>used(c[1])?`<br>· ${esc(c[1])} — 내역 ${used(c[1])}건`:'').join('')}</div>
+    <div style="display:flex;gap:8px">
+      <button class="btn ghost" style="flex:1" onclick="resetCats()">기본값 복원</button>
+      <button class="btn primary" style="flex:2" onclick="saveCats()">저장</button>
+    </div>`);
+}
+function readCatInputs(){
+  const list=catList(catKind).slice();
+  list.forEach((c,i)=>{ const e=$('ct-e-'+i), n=$('ct-n-'+i);
+    if(e&&n) list[i]=[ (e.value.trim()||'💸'), n.value.trim() ]; });
+  return list.filter(c=>c[1]);
+}
+function writeCats(list){
+  S.cats=S.cats||{}; S.cats[catKind]=list;
+  if(!S.cats.exp)S.cats.exp=catList('exp'); if(!S.cats.inc)S.cats.inc=catList('inc');
+}
+function addCat(){
+  const e=val('ct-new-e').trim()||'💸', n=val('ct-new-n').trim();
+  if(!n)return toast('카테고리 이름을 입력해주세요');
+  const list=readCatInputs();
+  if(list.some(c=>c[1]===n))return toast('같은 이름이 이미 있어요');
+  list.push([e,n]); writeCats(list); save(); renderCatModal(); toast('추가했어요');
+}
+function moveCat(i,d){
+  const list=readCatInputs(), j=i+d;
+  if(j<0||j>=list.length)return;
+  [list[i],list[j]]=[list[j],list[i]]; writeCats(list); save(); renderCatModal();
+}
+function rmCat(i){
+  const list=readCatInputs(), c=list[i]; if(!c)return;
+  const n=S.tx.filter(t=>t.cat===c[1]).length;
+  if(n)return toast(`'${c[1]}'는 내역 ${n}건에서 쓰이고 있어 삭제할 수 없어요`);
+  list.splice(i,1); writeCats(list); save(); renderCatModal(); toast('삭제했어요');
+}
+function saveCats(){
+  const before=catList(catKind).map(c=>c[1]);
+  const list=readCatInputs();
+  if(!list.length)return toast('카테고리가 최소 1개는 있어야 해요');
+  const names=list.map(c=>c[1]);
+  if(new Set(names).size!==names.length)return toast('중복된 이름이 있어요');
+  // 이름이 바뀐 카테고리는 기존 내역/예산/고정에도 반영
+  let renamed=0;
+  before.forEach((old,i)=>{ const now=names[i];
+    if(now&&old!==now){
+      S.tx.forEach(t=>{ if(t.cat===old)t.cat=now; });
+      S.fixed.forEach(f=>{ if(f.cat===old)f.cat=now; });
+      Object.values(S.budgets).forEach(b=>{ if(b.cats&&b.cats[old]!==undefined){ b.cats[now]=b.cats[old]; delete b.cats[old]; } });
+      S.cards.forEach(c=>{ if(Array.isArray(c.exclCats))c.exclCats=c.exclCats.map(x=>x===old?now:x); });
+      renamed++;
+    }});
+  writeCats(list); commit(renamed?`저장했어요 · 이름 변경 ${renamed}건 반영`:'저장했어요');
+}
+function resetCats(){
+  if(!confirm('카테고리를 기본값으로 되돌릴까요? (기존 내역의 카테고리 이름은 그대로 남아요)'))return;
+  S.cats=S.cats||{}; S.cats[catKind]=(catKind==='inc'?DEF_INC_CATS:DEF_EXP_CATS).slice();
+  save(); renderCatModal(); toast('기본값으로 되돌렸어요');
+}
+
+/* ═════════ 알림 종류 설정 ═════════ */
+function renderNotifySection(){
+  const n=S.notify||{}, row=(k,label,desc)=>`<label class="row" style="padding:7px 2px;gap:10px;cursor:pointer">
+    <span style="flex:1"><b style="font-size:.86rem">${label}</b><br><span class="tiny">${desc}</span></span>
+    <input type="checkbox" style="width:auto" ${n[k]!==false?'checked':''} onchange="setNotify('${k}',this.checked)"></label>`;
+  return `<div class="card tight" style="margin-bottom:14px">
+    <div style="font-weight:800;font-size:.9rem;margin-bottom:4px">🔔 어떤 알림을 받을까요</div>
+    ${row('fixed','결제 예정','고정비 결제일이 3일 내로 다가올 때')}
+    ${row('budget','예산 경고','이번 달 예산의 80%를 넘겼을 때')}
+    ${row('card','카드 실적','실적 마감이 가까운데 미달일 때')}
+    ${row('inactive','기록 리마인드','3일 이상 기록이 없을 때')}
+    <div class="tiny" style="margin-top:6px">서버가 아침에 확인해서 필요한 것만 보내요.</div></div>`;
+}
+function setNotify(k,v){ S.notify=S.notify||{}; S.notify[k]=v; save(); toast(v?'알림을 켰어요':'알림을 껐어요'); }
+
+/* ═════════ 고정수입 데이터 정합성 점검 ═════════ */
+// 옛 버전은 고정수입도 '지출'로 자동기록했을 수 있음 → 찾아서 바로잡기
+function findFixedMismatch(){
+  const incFixed=S.fixed.filter(f=>(f.kind||'expense')==='income');
+  const bad=[];
+  incFixed.forEach(f=>{
+    S.tx.forEach(t=>{ if(t.fixedId===f.id && t.type==='expense') bad.push({t,f}); });
+  });
+  return bad;
+}
+function openFixCheckModal(){
+  const bad=findFixedMismatch();
+  openModal(`${sheetHead('데이터 점검')}
+    ${bad.length?`<div class="card tight warn" style="margin-bottom:12px">
+      <div class="w-title">⚠️ 잘못 기록된 고정수입 ${bad.length}건</div>
+      <div class="w-body">고정 <b>수입</b>으로 등록했는데 <b>지출</b>로 기록된 내역이에요. 예전 버전에서 생긴 문제로, 아래 버튼으로 한 번에 고칠 수 있어요.</div></div>
+      ${bad.slice(0,20).map(({t,f})=>`<div class="tx"><div class="t-main"><div class="t-name">${esc(f.name)}</div>
+        <div class="t-sub">${t.date} · 지출로 기록 ${fmt(t.amount)}</div></div>
+        <span class="badge terra">수입이어야 함</span></div>`).join('')}
+      <button class="btn primary block" style="margin-top:12px" onclick="repairFixedMismatch()">🔧 ${bad.length}건 모두 수입으로 바로잡기</button>
+      <div class="tiny" style="margin-top:8px">계좌 잔액도 함께 다시 계산돼요 (지출 취소 + 수입 반영).</div>`
+    :`<div class="card tight" style="background:var(--green-soft);border-color:var(--green)">
+      <div style="font-weight:800;color:var(--green)">✅ 문제 없어요</div>
+      <div class="tiny" style="margin-top:4px">고정수입이 지출로 잘못 기록된 내역이 없습니다.</div></div>`}`);
+}
+function repairFixedMismatch(){
+  const bad=findFixedMismatch();
+  if(!bad.length)return toast('고칠 내역이 없어요');
+  if(!confirm(`${bad.length}건을 수입으로 바로잡을까요? 계좌 잔액도 함께 정정돼요.`))return;
+  let n=0;
+  bad.forEach(({t,f})=>{
+    applyBalance(t,-1);        // 기존 지출 반영 취소
+    t.type='income';
+    if(f.cat)t.cat=f.cat;
+    t.payKind='account'; if(f.payId)t.payId=f.payId;
+    applyBalance(t,1);         // 수입으로 다시 반영
+    n++;
+  });
+  commit(`${n}건을 수입으로 바로잡았어요`);
+}
+
+/* ═════════ 빠른 입력 (자주 쓰는 내역) ═════════ */
+function quickList(){
+  const q=(S.quick||[]).slice();
+  if(q.length) return q.slice(0,6);
+  // 즐겨찾기가 없으면 최근 지출에서 자동 추천(같은 카테고리+금액 조합 빈도순)
+  const m={};
+  S.tx.filter(t=>t.type==='expense').slice(-60).forEach(t=>{
+    const k=`${t.cat}|${t.amount}|${t.memo||''}`;
+    m[k]=m[k]||{cat:t.cat,amount:t.amount,memo:t.memo||'',payKind:t.payKind,payId:t.payId,n:0};
+    m[k].n++;
+  });
+  return Object.values(m).filter(x=>x.n>=2).sort((a,b)=>b.n-a.n).slice(0,6);
+}
+function renderQuick(){
+  const el=$('quick-card'); if(!el) return;
+  const list=quickList();
+  if(!list.length){ el.innerHTML=`<div style="font-weight:800;font-size:.9rem">⚡ 빠른 입력</div>
+    <div class="empty">같은 지출을 2번 이상 기록하면<br>여기서 한 번에 다시 넣을 수 있어요</div>`; return; }
+  el.innerHTML=`<div class="row" style="margin-bottom:8px"><div style="font-weight:800;font-size:.9rem">⚡ 빠른 입력</div>
+      <span class="tiny">탭하면 오늘 날짜로 기록</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:7px">
+      ${list.map((q,i)=>`<button class="btn ghost sm" style="text-align:left" onclick="runQuick(${i})">
+        ${CAT_EMO[q.cat]||'💸'} ${esc(q.memo||q.cat)} <b class="num">${fmtK(q.amount)}</b></button>`).join('')}
+    </div>`;
+}
+function runQuick(i){
+  const q=quickList()[i]; if(!q)return;
+  const t={id:uid(),type:'expense',date:todayStr(),amount:q.amount,cat:q.cat,memo:q.memo||'',
+    payKind:q.payKind||'cash',payId:q.payId||'',defended:false};
+  if(t.payKind==='card'&&!cardById(t.payId)){t.payKind='cash';t.payId=''}
+  if(t.payKind==='account'&&!accById(t.payId)){t.payKind='cash';t.payId=''}
+  if(t.payKind==='card'){ const c=cardById(t.payId); if(c&&c.type==='credit'){t.months=1;t.paidPortions=0} }
+  S.tx.push(t); applyBalance(t,1);
+  save(); renderAll(); toast(`${q.memo||q.cat} ${fmt(q.amount)} 기록했어요`);
+}
+function addQuickFromTx(id){
+  const t=S.tx.find(x=>x.id===id); if(!t||t.type!=='expense')return toast('지출 내역만 추가할 수 있어요');
+  S.quick=S.quick||[];
+  if(S.quick.some(q=>q.cat===t.cat&&q.amount===t.amount&&(q.memo||'')===(t.memo||'')))return toast('이미 빠른 입력에 있어요');
+  S.quick.unshift({cat:t.cat,amount:t.amount,memo:t.memo||'',payKind:t.payKind,payId:t.payId});
+  S.quick=S.quick.slice(0,6);
+  commit('빠른 입력에 추가했어요');
 }
 
 /* ═════════ 테마(다크 모드) ═════════ */
