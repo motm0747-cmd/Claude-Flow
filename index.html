@@ -653,6 +653,7 @@ function migrate(){
   S.wish=S.wish||[]; S.recon=S.recon||[]; S.scores=S.scores||{};
   S.cats=S.cats||null;              // 커스텀 카테고리 (null이면 기본값)
   S.quick=S.quick||[];              // 빠른 입력 즐겨찾기
+  S.quickHide=S.quickHide||[];      // 빠른 입력에서 숨긴 항목(자동 추천 포함)
   S.notify=S.notify||{budget:true,card:true,fixed:true,inactive:true}; // 알림 종류
   S.fixed.forEach(f=>{ if(!f.kind)f.kind='expense'; if(f.from===undefined)f.from=''; if(f.to===undefined)f.to=''; });
   S.cards.forEach(c=>{ if(c.annualFee===undefined)c.annualFee=0; });
@@ -3985,8 +3986,11 @@ function repairFixedMismatch(){
 }
 
 /* ═════════ 빠른 입력 (자주 쓰는 내역) ═════════ */
+const quickKey=q=>`${q.cat}|${q.amount}|${q.memo||''}`;
+let quickEdit=false;
 function quickList(){
-  const q=(S.quick||[]).slice();
+  const hide=S.quickHide||[];
+  const q=(S.quick||[]).filter(x=>!hide.includes(quickKey(x)));
   if(q.length) return q.slice(0,6);
   // 즐겨찾기가 없으면 최근 지출에서 자동 추천(같은 카테고리+금액 조합 빈도순)
   const m={};
@@ -3995,19 +3999,45 @@ function quickList(){
     m[k]=m[k]||{cat:t.cat,amount:t.amount,memo:t.memo||'',payKind:t.payKind,payId:t.payId,n:0};
     m[k].n++;
   });
-  return Object.values(m).filter(x=>x.n>=2).sort((a,b)=>b.n-a.n).slice(0,6);
+  return Object.values(m).filter(x=>x.n>=2&&!hide.includes(quickKey(x)))
+    .sort((a,b)=>b.n-a.n).slice(0,6);
 }
 function renderQuick(){
   const el=$('quick-card'); if(!el) return;
   const list=quickList();
-  if(!list.length){ el.innerHTML=`<div style="font-weight:800;font-size:.9rem">⚡ 빠른 입력</div>
-    <div class="empty">같은 지출을 2번 이상 기록하면<br>여기서 한 번에 다시 넣을 수 있어요</div>`; return; }
+  const hidden=(S.quickHide||[]).length;
+  if(!list.length){
+    el.innerHTML=`<div class="row"><div style="font-weight:800;font-size:.9rem">⚡ 빠른 입력</div>
+      ${hidden?`<button class="btn ghost sm" onclick="resetQuickHidden()">숨김 ${hidden}개 복원</button>`:''}</div>
+      <div class="empty">같은 지출을 2번 이상 기록하면<br>여기서 한 번에 다시 넣을 수 있어요</div>`;
+    quickEdit=false; return;
+  }
   el.innerHTML=`<div class="row" style="margin-bottom:8px"><div style="font-weight:800;font-size:.9rem">⚡ 빠른 입력</div>
-      <span class="tiny">탭하면 오늘 날짜로 기록</span></div>
+      <span style="display:flex;gap:6px;align-items:center">
+        ${(!quickEdit&&hidden)?`<button class="btn ghost sm" onclick="resetQuickHidden()">숨김 ${hidden}개 복원</button>`:''}
+        <button class="btn ${quickEdit?'primary':'ghost'} sm" onclick="toggleQuickEdit()">${quickEdit?'완료':'편집'}</button></span></div>
     <div style="display:flex;flex-wrap:wrap;gap:7px">
-      ${list.map((q,i)=>`<button class="btn ghost sm" style="text-align:left" onclick="runQuick(${i})">
-        ${CAT_EMO[q.cat]||'💸'} ${esc(q.memo||q.cat)} <b class="num">${fmtK(q.amount)}</b></button>`).join('')}
-    </div>`;
+      ${list.map((q,i)=>quickEdit
+        ? `<span class="btn ghost sm" style="text-align:left;display:inline-flex;align-items:center;gap:7px">
+             ${CAT_EMO[q.cat]||'💸'} ${esc(q.memo||q.cat)} <b class="num">${fmtK(q.amount)}</b>
+             <span style="color:var(--danger);font-weight:800;cursor:pointer;padding:0 2px" onclick="delQuick(${i})">✕</span></span>`
+        : `<button class="btn ghost sm" style="text-align:left" onclick="runQuick(${i})">
+             ${CAT_EMO[q.cat]||'💸'} ${esc(q.memo||q.cat)} <b class="num">${fmtK(q.amount)}</b></button>`).join('')}
+    </div>
+    <div class="tiny" style="margin-top:7px">${quickEdit?'✕ 를 눌러 지우세요. 자동 추천 항목은 숨김 처리돼요.':'탭하면 오늘 날짜로 기록돼요'}</div>`;
+}
+function toggleQuickEdit(){ quickEdit=!quickEdit; renderQuick(); }
+function delQuick(i){
+  const q=quickList()[i]; if(!q)return;
+  const k=quickKey(q);
+  const before=(S.quick||[]).length;
+  S.quick=(S.quick||[]).filter(x=>quickKey(x)!==k);
+  // 즐겨찾기에 없던 자동 추천 항목이면 숨김 목록에 넣어 다시 안 뜨게
+  if(S.quick.length===before){ S.quickHide=S.quickHide||[]; if(!S.quickHide.includes(k))S.quickHide.push(k); }
+  save(); renderQuick(); toast('빠른 입력에서 지웠어요');
+}
+function resetQuickHidden(){
+  S.quickHide=[]; save(); renderQuick(); toast('숨긴 항목을 복원했어요');
 }
 function runQuick(i){
   const q=quickList()[i]; if(!q)return;
@@ -4023,7 +4053,9 @@ function addQuickFromTx(id){
   const t=S.tx.find(x=>x.id===id); if(!t||t.type!=='expense')return toast('지출 내역만 추가할 수 있어요');
   S.quick=S.quick||[];
   if(S.quick.some(q=>q.cat===t.cat&&q.amount===t.amount&&(q.memo||'')===(t.memo||'')))return toast('이미 빠른 입력에 있어요');
-  S.quick.unshift({cat:t.cat,amount:t.amount,memo:t.memo||'',payKind:t.payKind,payId:t.payId});
+  const item={cat:t.cat,amount:t.amount,memo:t.memo||'',payKind:t.payKind,payId:t.payId};
+  S.quickHide=(S.quickHide||[]).filter(k=>k!==quickKey(item));   // 지웠던 항목이면 숨김 해제
+  S.quick.unshift(item);
   S.quick=S.quick.slice(0,6);
   commit('빠른 입력에 추가했어요');
 }
