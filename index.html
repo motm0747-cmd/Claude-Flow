@@ -1486,7 +1486,7 @@ function openAccModal(id,presetType){
       <div class="tiny" id="ac-cur-hint" style="margin-top:5px"></div></div>
     ${isSav?`<div class="grid2">
       <div class="field"><label>월 납입액</label><input type="number" inputmode="numeric" id="ac-monthly" value="${a?a.monthly||'':''}" placeholder="${isHou?'100000':'0'}"></div>
-      ${isHou?`<div class="field"><label>가입일</label><input type="date" id="ac-join" value="${a?a.joinDate||'':''}"></div>`
+      ${isHou?`<div class="field"><label>가입일</label><input type="date" id="ac-join" value="${a?a.joinDate||'':''}" onchange="houEstimate()"></div>`
              :`<div class="field"><label>만기일</label><input type="date" id="ac-maturity" value="${a?a.maturity||'':''}"></div>`}
     </div>
     <div class="grid2">
@@ -1499,7 +1499,8 @@ function openAccModal(id,presetType){
           ${S.accounts.filter(x=>x.type==='checking'&&(!a||x.id!==a.id)).map(x=>`<option value="${x.id}" ${a&&a.payFrom===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
         </select></div>
     </div>
-    ${isHou?`<details class="acc" style="margin-bottom:12px"><summary>청약 상세 설정 (선택)</summary>
+    ${isHou?`<div class="tiny" id="ac-hou-hint" style="margin:-6px 0 12px"></div>
+    <details class="acc" style="margin-bottom:12px" ${a&&a.roundsBase?'open':''}><summary>청약 상세 설정 (선택)</summary>
       <div style="padding:0 16px 14px">
         <div class="grid2">
           <div class="field"><label>이전 납입 회차</label><input type="number" inputmode="numeric" id="ac-rbase" value="${a?a.roundsBase||'':''}" placeholder="0">
@@ -1523,6 +1524,7 @@ function openAccModal(id,presetType){
       ${a?`<button class="btn ghost" style="flex:1" onclick="delAcc('${a.id}')">삭제</button>`:''}
       <button class="btn primary" style="flex:2" onclick="saveAcc('${a?a.id:''}','${type}')">저장</button>
     </div>`);
+  if(isHou)houEstimate();
 }
 function acCurHint(){
   const c=$('ac-cur'), b=$('ac-bal'), h=$('ac-cur-hint');
@@ -1547,6 +1549,14 @@ function saveAcc(id,type){
     recogBase:$('ac-recbase')?(Math.round(numVal('ac-recbase'))||0):undefined,
     recogCap:$('ac-recog')?(Math.round(numVal('ac-recog'))||0):undefined,
     deductCap:$('ac-dcap')?(Math.round(numVal('ac-dcap'))||0):undefined};
+  // 청약: 가입일이 있으면 가입 시 납입(1회차)이 최소한 반영되도록 보정
+  if(type==='housing'&&data.joinDate&&!data.roundsBase){
+    data.roundsBase=1;
+    if(!data.recogBase){
+      const cap=data.recogCap||HOUSING_DEF.recogCap;
+      data.recogBase=Math.min(Math.round(data.balance||0),cap);
+    }
+  }
   if(data.payDay&&!data.payFrom)return toast('자동납입하려면 출금 계좌를 선택해주세요');
   if(data.payDay&&!data.monthly)return toast('자동납입하려면 월 납입액을 입력해주세요');
   // 자동납입을 새로 켤 때, 이번 달 납입일이 이미 지났으면 이번 달은 건너뜀
@@ -2060,6 +2070,36 @@ function housingStats(a){
   return {cap,byM,months,rounds,recognized,thisYear,dCap,deductBase,
     deductAmt:Math.round(deductBase*(a.deductRate||HOUSING_DEF.deductRate)),
     ageM, paidThisMonth:byM[thisYM()]||0};
+}
+// 가입일로부터 예상 납입 회차 계산 (가입 시 납입이 1회차)
+function houRoundsFromJoin(join){
+  if(!join)return 0;
+  const [jy,jm]=join.split('-').map(Number);
+  if(!jy||!jm)return 0;
+  const now=new Date();
+  const months=(now.getFullYear()-jy)*12+(now.getMonth()+1-jm);
+  return Math.max(1,months+1);        // 가입한 달이 1회차
+}
+function houEstimate(){
+  const el=$('ac-hou-hint'); if(!el)return;
+  const join=val('ac-join');
+  if(!join){el.innerHTML='';return}
+  const est=houRoundsFromJoin(join);
+  const cur=$('ac-rbase')?(Math.round(numVal('ac-rbase'))||0):0;
+  el.innerHTML=`💡 가입일 기준 <b>${est}회차</b>까지 납입했을 수 있어요 (가입 시 납입이 1회차).
+    ${cur===est?'<span class="pos">✓ 반영됨</span>':`<span style="color:var(--terra);cursor:pointer;font-weight:700" onclick="houFill(${est})">이 값으로 채우기</span>`}`;
+}
+function houFill(est){
+  const rb=$('ac-rbase'); if(rb)rb.value=est;
+  const cap=(Math.round(numVal('ac-recog'))||HOUSING_DEF.recogCap);
+  const rc=$('ac-recbase');
+  if(rc&&!(+rc.value)){
+    const bal=numVal('ac-bal');
+    rc.value=Math.min(Math.round(bal), est*cap);   // 잔액과 한도 중 작은 쪽으로 추정
+  }
+  const det=document.querySelector('details.acc'); if(det)det.open=true;
+  houEstimate();
+  toast('가입일 기준으로 채웠어요 — 실제와 다르면 수정하세요');
 }
 function renderHousing(){
   const el=$('housing-card'); if(!el)return;
