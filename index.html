@@ -1506,6 +1506,14 @@ function saveAcc(id,type){
     payFrom:$('ac-payfrom')?val('ac-payfrom'):undefined};
   if(data.payDay&&!data.payFrom)return toast('자동납입하려면 출금 계좌를 선택해주세요');
   if(data.payDay&&!data.monthly)return toast('자동납입하려면 월 납입액을 입력해주세요');
+  // 자동납입을 새로 켤 때, 이번 달 납입일이 이미 지났으면 이번 달은 건너뜀
+  if(data.payDay){
+    const prev=id?accById(id):null;
+    if(!prev||!prev.payDay){
+      const thisDue=`${thisYM()}-${pad(data.payDay)}`;
+      if(thisDue<todayStr())data.payFrom_start=`${nextYM(thisYM())}-${pad(data.payDay)}`;
+    }else data.payFrom_start=prev.payFrom_start;
+  }
   if(id)Object.assign(accById(id),data);
   else S.accounts.push({id:uid(),type,...data});
   commit('저장했어요');
@@ -1692,8 +1700,9 @@ function openFixedModal(id,presetKind){
     <div class="field"><label>이름</label><input id="fx-name" placeholder="${isInc?'예: 월급, 정기 용돈, 과외비':'예: 유튜브 프리미엄, 통신비'}" value="${f?esc(f.name):''}"></div>
     <div class="grid2">
       <div class="field"><label>금액 (원)</label><input type="number" inputmode="numeric" id="fx-amt" value="${f?f.amount:''}" placeholder="0"></div>
-      <div class="field"><label>매월 ${isInc?'입금일':'결제일'}</label><input type="number" inputmode="numeric" id="fx-day" min="1" max="28" value="${f?f.day:1}"></div>
+      <div class="field"><label>매월 ${isInc?'입금일':'결제일'}</label><input type="number" inputmode="numeric" id="fx-day" min="1" max="28" value="${f?f.day:1}" oninput="fxStartHint()"></div>
     </div>
+    ${f?'':`<div class="tiny" id="fx-start-hint" style="margin:-6px 0 12px"></div>`}
     <div class="grid2">
       <div class="field"><label>카테고리</label><select id="fx-cat">${cats.map(([e,n])=>`<option ${f&&f.cat===n?'selected':''}>${n}</option>`).join('')}</select></div>
       <div class="field"><label>${isInc?'입금 계좌':'결제수단'}</label><select id="fx-pay">
@@ -1715,6 +1724,7 @@ function openFixedModal(id,presetKind){
       ${f?`<button class="btn ghost" style="flex:1" onclick="delFixed('${f.id}')">삭제</button>`:''}
       <button class="btn primary" style="flex:2" onclick="saveFixed('${f?f.id:''}')">저장</button>
     </div>`);
+  fxStartHint();
 }
 function fxSeg(btn,id){
   const k=btn.dataset.k;
@@ -1736,9 +1746,27 @@ function saveFixed(id){
   const kind=document.querySelector('#fx-seg button.on').dataset.k;
   const[pk,pi]=val('fx-pay').split('|');
   const data={kind,name,amount:amt,day,cat:val('fx-cat'),payKind:pk,payId:pi||'',from,to,active:chkVal('fx-active',true)};
-  if(id)Object.assign(S.fixed.find(x=>x.id===id),data);
-  else S.fixed.push({id:uid(),...data});
-  commit('저장했어요');
+  if(id){ Object.assign(S.fixed.find(x=>x.id===id),data); commit('저장했어요'); return; }
+  // 새로 등록: 이번 달 결제일이 이미 지났으면 이번 달은 건너뛰고 다음 달부터 기록
+  let skipped=false;
+  if(!data.from){
+    const today=todayStr(), thisDue=`${thisYM()}-${pad(day)}`;
+    if(thisDue<today){ data.from=`${nextYM(thisYM())}-${pad(day)}`; skipped=true; }
+  }
+  S.fixed.push({id:uid(),...data});
+  commit(skipped?`저장했어요 · 이번 달 ${day}일은 지나서 다음 달부터 기록돼요`:'저장했어요');
+}
+// 새 고정 항목 등록 시 '언제부터 기록되는지' 안내
+function fxStartHint(){
+  const el=$('fx-start-hint'); if(!el)return;
+  const day=Math.min(28,Math.max(1,numVal('fx-day')||1));
+  const today=todayStr(), thisDue=`${thisYM()}-${pad(day)}`;
+  if(thisDue<today){
+    const nm=nextYM(thisYM());
+    el.innerHTML=`🗓️ 이번 달 ${day}일은 이미 지나서 <b>${+nm.slice(5)}월 ${day}일부터</b> 기록돼요.`;
+  }else{
+    el.innerHTML=`🗓️ <b>이번 달 ${day}일</b>부터 기록돼요.`;
+  }
 }
 function delFixed(id){
   const f=S.fixed.find(x=>x.id===id);
@@ -1798,6 +1826,7 @@ function autoApplySaving(){
   let n=0, skipped=[];
   S.accounts.filter(a=>a.type==='saving'&&a.payDay>0&&a.monthly>0&&a.payFrom).forEach(a=>{
     if(a.payDay>day)return;                                        // 아직 납입일 전
+    if(a.payFrom_start&&`${ym}-${pad(a.payDay)}`<a.payFrom_start)return; // 설정 전의 지난 납입일은 건너뜀
     if(a.maturity&&a.maturity<`${ym}-${pad(a.payDay)}`)return;      // 만기 지남
     if(S.tx.some(t=>t.savingId===a.id&&ymOf(t.date)===ym))return;   // 이번 달 이미 납입
     const from=accById(a.payFrom);
