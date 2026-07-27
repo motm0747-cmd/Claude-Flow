@@ -558,7 +558,6 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
     <div class="card tight" id="housing-card"></div>
     <div class="sec-title">투자 <span class="link" onclick="openAccModal(null,'invest')">+ 추가</span></div>
     <div class="card tight" id="list-invest"></div>
-    <div class="card tight" id="holdings-card"></div>
     <div class="card" id="dca-card"></div>
     <div class="sec-title">저축 목표 <span class="link" onclick="openGoalModal()">+ 추가</span></div>
     <div class="card tight" id="list-goals"></div>
@@ -652,7 +651,6 @@ function migrate(){
   if(S.settings.simHorizon===undefined)S.settings.simHorizon=12;
   S.debts=S.debts||[]; S.budgets=S.budgets||{}; S.briefs=S.briefs||{}; S.anomAck=S.anomAck||[];
   S.wish=S.wish||[]; S.recon=S.recon||[]; S.scores=S.scores||{};
-  S.trades=S.trades||[];            // 주식 매수/매도 기록
   S.cats=S.cats||null;              // 커스텀 카테고리 (null이면 기본값)
   S.quick=S.quick||[];              // 빠른 입력 즐겨찾기
   S.notify=S.notify||{budget:true,card:true,fixed:true,inactive:true}; // 알림 종류
@@ -1420,7 +1418,6 @@ function renderAssets(){
     ob.style.display=S.accounts.length>1?'':'none';}
   renderFxChip();
   renderHousing();
-  renderHoldings();
   renderDCA();
   renderGoals();
   renderRecon();
@@ -1516,10 +1513,7 @@ function openAccModal(id,presetType){
       </div></details>`:''}
     <div class="tiny" style="margin:-6px 0 12px">${isHou?'🏠 청약통장은 묶인 돈으로 분류되고, <b>납입 회차·인정 납입액·소득공제</b>를 자동 계산해요.':'🔒 적금은 만기까지 묶인 돈으로 분류돼요.'}<br>💡 납입일·출금계좌를 정하면 <b>매달 자동으로 이체 처리</b>돼요 (출금계좌 → ${isHou?'청약':'적금'}).</div>`:''}
     ${isDep?`<div class="field"><label>만기일 (선택)</label><input type="date" id="ac-maturity" value="${a?a.maturity||'':''}"></div>`:''}
-    ${isInv&&a?`<div class="grid2" style="margin-bottom:10px">
-      <button class="btn soft" onclick="openInvLogModal('${a.id}')">💵 투자금 납입</button>
-      <button class="btn ghost" onclick="openTradeModal('${a.id}')">📊 매수·매도</button>
-    </div>`:''}
+    ${isInv&&a?`<button class="btn soft block" style="margin-bottom:10px" onclick="openInvLogModal('${a.id}')">＋ 투자금 납입 기록</button>`:''}
     <div style="display:flex;gap:8px;margin-top:6px">
       ${a?`<button class="btn ghost" style="flex:1" onclick="delAcc('${a.id}')">삭제</button>`:''}
       <button class="btn primary" style="flex:2" onclick="saveAcc('${a?a.id:''}','${type}')">저장</button>
@@ -1580,7 +1574,6 @@ function delAcc(id){
   if(!confirm(linked?`이 자산을 삭제할까요?\n연결된 항목 ${linked}건의 연결이 해제됩니다. (기록 자체는 유지돼요)`:'이 자산을 삭제할까요?'))return;
   S.accounts=S.accounts.filter(a=>a.id!==id);
   S.invLogs=S.invLogs.filter(l=>l.accountId!==id);
-  S.trades=S.trades.filter(t=>t.accountId!==id);
   S.cards.forEach(c=>{if(c.accountId===id)c.accountId=''});
   S.goals.forEach(g=>{if(g.accountId===id)g.accountId=''});
   S.debts.forEach(d=>{if(d.accountId===id)d.accountId=''});
@@ -1609,7 +1602,7 @@ function openInvLogModal(accId){
     <div class="field" id="il-fx-w" style="display:none"><label>적용 환율 (1$ 당 원)</label>
       <input type="number" inputmode="decimal" step="any" id="il-fx" value="${fxRate()}" oninput="ilHint()">
       <div class="tiny" style="margin-top:5px">💡 환전 당시 환율을 기록해두면 DCA 원가가 정확해져요.</div></div>
-    <div class="tiny" style="margin-bottom:12px">💡 여기서는 <b>돈을 옮기기만</b> 해요. 실제 종목 매수는 저장 후 <b>매수·매도</b>에서 기록하세요.</div>
+    <div class="tiny" style="margin-bottom:12px">💡 출금 계좌에서 투자 계좌로 <b>이체 처리</b>되고, DCA 차트의 납입액으로 쌓여요. 시세가 변했다면 계좌의 <b>현재 평가금액</b>도 갱신해주세요.</div>
     <button class="btn primary block" onclick="saveInvLog('${accId}')">이체하고 납입 기록</button>`);
   ilHint();
 }
@@ -1647,154 +1640,6 @@ function saveInvLog(accId){
   save();closeModal();renderAll();
   toast(`${from.name} → ${a?a.name:'투자'} ${fmt(krw)} 납입했어요`);
 }
-/* ═════════ 주식 매수 · 매도 ═════════ */
-// 계좌별 보유 종목 (이동평균법으로 평균단가·실현손익 계산)
-function holdingsOf(accId){
-  const m={};
-  S.trades.filter(t=>t.accountId===accId).slice()
-    .sort((a,b)=>(a.date+a.id).localeCompare(b.date+b.id))
-    .forEach(t=>{
-      const h=m[t.name]||(m[t.name]={name:t.name,qty:0,cost:0,cur:t.cur||'KRW',realized:0});
-      const fee=+t.fee||0;
-      if(t.side==='sell'){
-        const avg=h.qty>0?h.cost/h.qty:0;
-        const q=Math.min(t.qty,h.qty);
-        h.realized+=q*t.price-fee-avg*q;
-        h.cost-=avg*q; h.qty-=q;
-        if(h.qty<=0.0000001){h.qty=0;h.cost=0}
-      }else{
-        h.qty+=t.qty; h.cost+=t.qty*t.price+fee;
-      }
-    });
-  return Object.values(m);
-}
-let tradeDraft=null;
-function openTradeModal(accId,id){
-  const a=accById(accId);
-  const t=id?S.trades.find(x=>x.id===id):null;
-  tradeDraft=t?{...t}:{id:null,accountId:accId,date:todayStr(),side:'buy',name:'',qty:'',price:'',
-    cur:(a&&a.cur)||'KRW',fxAt:fxRate(),fee:''};
-  renderTradeModal();
-}
-function renderTradeModal(){
-  const d=tradeDraft, isEdit=!!d.id, a=accById(d.accountId);
-  const held=holdingsOf(d.accountId).filter(h=>h.qty>0);
-  openModal(`${sheetHead(isEdit?'거래 수정':'주식 매수 · 매도')}
-    <div class="field"><div class="seg">
-      <button class="${d.side==='buy'?'on':''}" onclick="syncTrade();tradeDraft.side='buy';renderTradeModal()">매수</button>
-      <button class="${d.side==='sell'?'on':''}" onclick="syncTrade();tradeDraft.side='sell';renderTradeModal()">매도</button>
-    </div></div>
-    <div class="field"><label>종목</label>
-      <input id="tr-name" placeholder="예: 삼성전자, VOO" value="${esc(d.name)}" list="tr-names">
-      <datalist id="tr-names">${held.map(h=>`<option value="${esc(h.name)}">`).join('')}</datalist>
-      ${(d.side==='sell'&&held.length)?`<div class="tiny" style="margin-top:5px">보유: ${held.map(h=>`<span style="cursor:pointer;color:var(--terra);font-weight:700" onclick="pickHolding('${esc(h.name)}')">${esc(h.name)} ${h.qty}주</span>`).join(' · ')}</div>`:''}</div>
-    <div class="grid2">
-      <div class="field"><label>수량</label><input type="number" inputmode="decimal" step="any" id="tr-qty" value="${d.qty}" placeholder="0" oninput="trHint()"></div>
-      <div class="field"><label>단가 (${CURS[d.cur]?CURS[d.cur].sym:'₩'})</label><input type="number" inputmode="decimal" step="any" id="tr-price" value="${d.price}" placeholder="0" oninput="trHint()"></div>
-    </div>
-    <div class="grid2">
-      <div class="field"><label>날짜</label><input type="date" id="tr-date" value="${d.date}"></div>
-      <div class="field"><label>수수료 (선택)</label><input type="number" inputmode="decimal" step="any" id="tr-fee" value="${d.fee}" placeholder="0" oninput="trHint()"></div>
-    </div>
-    <div class="field"><label>통화</label><select id="tr-cur" onchange="syncTrade();tradeDraft.cur=this.value;renderTradeModal()">
-      ${Object.entries(CURS).map(([k,v])=>`<option value="${k}" ${d.cur===k?'selected':''}>${v.sym} ${v.label}</option>`).join('')}</select></div>
-    <div class="card tight" style="margin-bottom:12px"><div class="tiny" id="tr-hint"></div></div>
-    <div class="tiny" style="margin-bottom:12px">💡 매수·매도는 계좌 <b>안에서</b> 현금↔주식이 바뀌는 거라 총 평가금액은 변하지 않아요.
-      시세가 변했다면 계좌의 <b>현재 평가금액</b>을 갱신해주세요.</div>
-    <div style="display:flex;gap:8px">
-      ${isEdit?`<button class="btn ghost" style="flex:1" onclick="delTrade('${d.id}')">삭제</button>`:''}
-      <button class="btn primary" style="flex:2" onclick="saveTrade()">${isEdit?'수정':'기록'}</button>
-    </div>`);
-  trHint();
-}
-function syncTrade(){
-  const d=tradeDraft; if(!d)return;
-  if($('tr-name'))d.name=val('tr-name');
-  if($('tr-qty'))d.qty=val('tr-qty');
-  if($('tr-price'))d.price=val('tr-price');
-  if($('tr-fee'))d.fee=val('tr-fee');
-  if($('tr-date'))d.date=val('tr-date');
-}
-function pickHolding(n){ syncTrade(); tradeDraft.name=n; renderTradeModal(); }
-function trHint(){
-  const h=$('tr-hint'); if(!h)return;
-  const d=tradeDraft, q=+val('tr-qty')||0, p=+val('tr-price')||0, fee=+val('tr-fee')||0;
-  const gross=q*p, net=d.side==='sell'?gross-fee:gross+fee;
-  const sym=CURS[d.cur]?CURS[d.cur].sym:'₩';
-  let s=`${d.side==='sell'?'매도 대금':'매수 금액'} <b class="num">${sym}${net.toLocaleString(undefined,{maximumFractionDigits:2})}</b>`;
-  if(d.cur==='USD')s+=` (≈ ${fmt(toKRW(net,'USD',d.fxAt||fxRate()))})`;
-  if(d.side==='sell'){
-    const held=holdingsOf(d.accountId).find(x=>x.name===val('tr-name'));
-    if(held&&held.qty>0){
-      const avg=held.cost/held.qty, pl=(p-avg)*Math.min(q,held.qty)-fee;
-      s+=`<br>보유 ${held.qty}주 · 평균단가 ${sym}${avg.toLocaleString(undefined,{maximumFractionDigits:2})}`;
-      if(q>0)s+=` → 실현손익 <b class="${pl>=0?'pos':'neg'}">${pl>=0?'+':''}${sym}${Math.round(pl).toLocaleString()}</b>`;
-      if(q>held.qty)s+=`<br><span style="color:var(--terra-deep)">⚠️ 보유 수량(${held.qty})보다 많아요</span>`;
-    }else if(val('tr-name'))s+=`<br><span style="color:var(--terra-deep)">⚠️ 보유하지 않은 종목이에요</span>`;
-  }
-  h.innerHTML=s;
-}
-function saveTrade(){
-  syncTrade();
-  const d=tradeDraft;
-  const name=(d.name||'').trim(), qty=+d.qty||0, price=+d.price||0, fee=+d.fee||0;
-  if(!name)return toast('종목을 입력해주세요');
-  if(qty<=0)return toast('수량을 확인해주세요');
-  if(price<=0)return toast('단가를 확인해주세요');
-  if(!d.date)return toast('날짜를 확인해주세요');
-  if(d.side==='sell'){
-    const held=holdingsOf(d.accountId).find(x=>x.name===name&&(!d.id||true));
-    const own=held?held.qty:0;
-    if(qty>own+0.0000001)return toast(`보유 수량(${own})보다 많이 팔 수 없어요`);
-  }
-  const rec={id:d.id||uid(),accountId:d.accountId,date:d.date,side:d.side,name,qty,price,
-    cur:d.cur,fxAt:d.cur==='USD'?(d.fxAt||fxRate()):1,fee};
-  if(d.id)Object.assign(S.trades.find(x=>x.id===d.id),rec);
-  else S.trades.push(rec);
-  commit(d.side==='sell'?'매도를 기록했어요':'매수를 기록했어요');
-}
-function delTrade(id){
-  askDel('이 거래를 삭제할까요?',()=>{S.trades=S.trades.filter(x=>x.id!==id);commit()});
-}
-function renderHoldings(){
-  const el=$('holdings-card'); if(!el)return;
-  const invs=S.accounts.filter(a=>a.type==='invest');
-  const any=invs.some(a=>S.trades.some(t=>t.accountId===a.id));
-  if(!invs.length||!any){el.innerHTML='';el.style.display='none';return}
-  el.style.display='';
-  el.innerHTML=invs.map(a=>{
-    const hs=holdingsOf(a.id), open=hs.filter(h=>h.qty>0);
-    if(!hs.length)return '';
-    const realized=hs.reduce((s,h)=>s+h.realized,0);
-    const sym=CURS[a.cur]?CURS[a.cur].sym:'₩';
-    return `<div>
-      <div class="row" style="margin-bottom:8px"><b style="font-size:.92rem">📊 ${esc(a.name)} 보유 종목</b>
-        <button class="btn soft sm" onclick="openTradeModal('${a.id}')">＋ 매수·매도</button></div>
-      ${open.length?open.map(h=>{
-        const avg=h.qty>0?h.cost/h.qty:0;
-        return `<div class="tx" onclick="openTradeListModal('${a.id}','${esc(h.name)}')">
-          <div class="t-main"><div class="t-name">${esc(h.name)}</div>
-            <div class="t-sub">${h.qty}주 · 평균 ${sym}${avg.toLocaleString(undefined,{maximumFractionDigits:2})}</div></div>
-          <div style="text-align:right"><div class="t-amt num">${sym}${Math.round(h.cost).toLocaleString()}</div>
-            <div class="tiny">매수원가</div></div></div>`;
-      }).join(''):'<div class="empty">보유 중인 종목이 없어요</div>'}
-      ${realized!==0?`<div class="divider"></div><div class="row"><span class="tiny">실현손익 누계</span>
-        <b class="num ${realized>=0?'pos':'neg'}">${realized>=0?'+':''}${sym}${Math.round(realized).toLocaleString()}</b></div>`:''}
-    </div>`;
-  }).join('<div class="divider"></div>');
-}
-function openTradeListModal(accId,name){
-  const list=S.trades.filter(t=>t.accountId===accId&&t.name===name).sort((a,b)=>b.date.localeCompare(a.date));
-  const sym=CURS[list[0]&&list[0].cur]?CURS[list[0].cur].sym:'₩';
-  openModal(`${sheetHead(name+' 거래 내역')}
-    ${list.map(t=>`<div class="tx" onclick="openTradeModal('${accId}','${t.id}')">
-      <div class="emo">${t.side==='sell'?'📤':'📥'}</div>
-      <div class="t-main"><div class="t-name">${t.side==='sell'?'매도':'매수'} ${t.qty}주</div>
-        <div class="t-sub">${t.date} · 단가 ${sym}${t.price.toLocaleString()}</div></div>
-      <div class="t-amt num ${t.side==='sell'?'pos':''}">${t.side==='sell'?'+':'−'}${sym}${Math.round(t.qty*t.price).toLocaleString()}</div></div>`).join('')}
-    <button class="btn soft block" style="margin-top:12px" onclick="openTradeModal('${accId}')">＋ 이 계좌에 거래 추가</button>`);
-}
-
 /* 달러 투자: 주가 손익과 환율 손익을 분리 */
 function fxBreakdown(){
   const usd=S.invLogs.filter(l=>l.cur==='USD');
@@ -3899,7 +3744,7 @@ function importData(input){
       const d=JSON.parse(r.result);
       if(!d||typeof d!=='object'||Array.isArray(d))throw new Error('형식 오류');
       if(!Array.isArray(d.tx)||!Array.isArray(d.accounts))throw new Error('내역/계좌 데이터가 없어요');
-      ['cards','fixed','invLogs','trades','debts','wish','recon','goals'].forEach(k=>{
+      ['cards','fixed','invLogs','debts','wish','recon','goals'].forEach(k=>{
         if(d[k]!==undefined&&!Array.isArray(d[k]))throw new Error(k+' 형식 오류');
       });
       ['reports','budgets','briefs','scores','settings'].forEach(k=>{
