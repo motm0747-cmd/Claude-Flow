@@ -1422,6 +1422,11 @@ function assetRow(a){
   let sub=a.bank?esc(a.bank):'';
   if(a.type==='saving'){
     sub+=(sub?' · ':'')+(a.monthly?`월 ${fmtK(a.monthly)}원`:'')+(a.maturity?` · ${a.maturity} 만기`:'');
+    if(a.payDay&&a.payFrom){
+      const from=accById(a.payFrom);
+      sub+=` · 🔁 매월 ${a.payDay}일 ${from?esc(from.name):'출금계좌 없음'}`;
+      if(S.tx.some(t=>t.savingId===a.id&&ymOf(t.date)===thisYM()))sub+=' <span class="pos">✓납입</span>';
+    }
     sub+=' · 출금 불가 🔒';
   }
   if(a.type==='deposit'&&a.maturity)sub+=(sub?' · ':'')+`${a.maturity} 만기`;
@@ -1462,7 +1467,18 @@ function openAccModal(id,presetType){
     ${isSav?`<div class="grid2">
       <div class="field"><label>월 납입액</label><input type="number" inputmode="numeric" id="ac-monthly" value="${a?a.monthly||'':''}" placeholder="0"></div>
       <div class="field"><label>만기일</label><input type="date" id="ac-maturity" value="${a?a.maturity||'':''}"></div>
-    </div><div class="tiny" style="margin:-6px 0 12px">🔒 적금은 만기까지 묶인 돈으로 분류돼요.</div>`:''}
+    </div>
+    <div class="grid2">
+      <div class="field"><label>납입일 (매월)</label>
+        <select id="ac-payday"><option value="">자동납입 안 함</option>
+          ${Array.from({length:28},(_,i)=>i+1).map(d=>`<option value="${d}" ${a&&a.payDay==d?'selected':''}>${d}일</option>`).join('')}
+        </select></div>
+      <div class="field"><label>출금 계좌</label>
+        <select id="ac-payfrom"><option value="">선택</option>
+          ${S.accounts.filter(x=>x.type==='checking'&&(!a||x.id!==a.id)).map(x=>`<option value="${x.id}" ${a&&a.payFrom===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
+        </select></div>
+    </div>
+    <div class="tiny" style="margin:-6px 0 12px">🔒 적금은 만기까지 묶인 돈으로 분류돼요.<br>💡 납입일·출금계좌를 정하면 <b>매달 자동으로 이체 처리</b>돼요 (출금계좌 → 적금).</div>`:''}
     ${isDep?`<div class="field"><label>만기일 (선택)</label><input type="date" id="ac-maturity" value="${a?a.maturity||'':''}"></div>`:''}
     ${isInv&&a?`<button class="btn soft block" style="margin-bottom:10px" onclick="openInvLogModal('${a.id}')">＋ 납입(매수) 기록 추가</button>`:''}
     <div style="display:flex;gap:8px;margin-top:6px">
@@ -1485,7 +1501,11 @@ function saveAcc(id,type){
   const raw=numVal('ac-bal');
   const data={name,cur,bank:val('ac-bank').trim(),balance:cur==='USD'?Math.round(raw*100)/100:Math.round(raw),
     monthly:$('ac-monthly')?Math.round(numVal('ac-monthly')):undefined,
-    maturity:$('ac-maturity')?val('ac-maturity'):undefined};
+    maturity:$('ac-maturity')?val('ac-maturity'):undefined,
+    payDay:$('ac-payday')?(+val('ac-payday')||0):undefined,
+    payFrom:$('ac-payfrom')?val('ac-payfrom'):undefined};
+  if(data.payDay&&!data.payFrom)return toast('자동납입하려면 출금 계좌를 선택해주세요');
+  if(data.payDay&&!data.monthly)return toast('자동납입하려면 월 납입액을 입력해주세요');
   if(id)Object.assign(accById(id),data);
   else S.accounts.push({id:uid(),type,...data});
   commit('저장했어요');
@@ -1494,13 +1514,15 @@ function delAcc(id){
   const linked=S.cards.filter(c=>c.accountId===id).length
     +S.goals.filter(g=>g.accountId===id).length
     +S.debts.filter(d=>d.accountId===id&&!d.settled).length
-    +S.fixed.filter(f=>f.payKind==='account'&&f.payId===id).length;
+    +S.fixed.filter(f=>f.payKind==='account'&&f.payId===id).length
+    +S.accounts.filter(a=>a.payFrom===id).length;
   if(!confirm(linked?`이 자산을 삭제할까요?\n연결된 항목 ${linked}건의 연결이 해제됩니다. (기록 자체는 유지돼요)`:'이 자산을 삭제할까요?'))return;
   S.accounts=S.accounts.filter(a=>a.id!==id);
   S.invLogs=S.invLogs.filter(l=>l.accountId!==id);
   S.cards.forEach(c=>{if(c.accountId===id)c.accountId=''});
   S.goals.forEach(g=>{if(g.accountId===id)g.accountId=''});
   S.debts.forEach(d=>{if(d.accountId===id)d.accountId=''});
+  S.accounts.forEach(a=>{if(a.payFrom===id){a.payFrom='';a.payDay=0}});   // 자동납입 출금계좌 해제
   S.fixed.forEach(f=>{if(f.payKind==='account'&&f.payId===id){f.payKind='cash';f.payId=''}});
   commit('삭제했어요');
 }
@@ -1768,6 +1790,28 @@ function autoApplyFixed(){ // 결제일 지난 고정 항목 자동 기록 (지�
     isInc?ni++:ne++;
   });
   if(ne||ni){save();toast(`고정 ${ne?`지출 ${ne}건`:''}${ne&&ni?' · ':''}${ni?`수입 ${ni}건`:''}을 자동 기록했어요`)}
+}
+
+/* 적금 자동납입: 납입일이 지나면 출금계좌 → 적금계좌로 이체 기록 */
+function autoApplySaving(){
+  const ym=thisYM(), day=new Date().getDate();
+  let n=0, skipped=[];
+  S.accounts.filter(a=>a.type==='saving'&&a.payDay>0&&a.monthly>0&&a.payFrom).forEach(a=>{
+    if(a.payDay>day)return;                                        // 아직 납입일 전
+    if(a.maturity&&a.maturity<`${ym}-${pad(a.payDay)}`)return;      // 만기 지남
+    if(S.tx.some(t=>t.savingId===a.id&&ymOf(t.date)===ym))return;   // 이번 달 이미 납입
+    const from=accById(a.payFrom);
+    if(!from){skipped.push(`${a.name}(출금계좌 없음)`);return}       // 계좌가 삭제된 경우
+    if(accKRW(from)<a.monthly){skipped.push(`${a.name}(잔액 부족)`);return}
+    const t={id:uid(),type:'transfer',date:`${ym}-${pad(a.payDay)}`,amount:a.monthly,
+      fromId:from.id,toId:a.id,memo:`${a.name} 자동납입`,savingId:a.id,fxAt:fxRate()};
+    S.tx.push(t);applyBalance(t,1);n++;
+  });
+  if(n||skipped.length){
+    save();
+    if(n)toast(`적금 ${n}건을 자동 납입했어요`);
+    else if(skipped.length)toast(`적금 자동납입 보류 — ${skipped[0]}`);
+  }
 }
 
 /* ═════════ 카드 ═════════ */
@@ -3870,6 +3914,7 @@ function restoreVersion(id){
 
 /* ═════════ 시작 ═════════ */
 autoApplyFixed();
+autoApplySaving();
 recordScore();
 txView=S.settings.txView||'cal'; cardView=S.settings.cardView||'manage';
 setTimeout(()=>{
