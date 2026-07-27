@@ -1424,6 +1424,46 @@ function renderAssets(){
   renderDebts();
   renderFixed();
 }
+/* ═════════ 이자 계산 ═════════ */
+const TAX_RATE=0.154;                       // 이자소득세 15.4% (일반과세)
+const monthsUntil=d=>{                      // 오늘부터 그 날짜까지 남은 개월(내림)
+  if(!d)return 0;
+  const [y,m,dd]=d.split('-').map(Number); const n=new Date();
+  let mo=(y-n.getFullYear())*12+(m-(n.getMonth()+1));
+  if(dd<n.getDate())mo-=1;
+  return Math.max(0,mo);
+};
+function taxOf(a,pre){ return a.taxFree?0:Math.round(pre*TAX_RATE); }
+/* 적금: 매달 넣는 돈마다 예치 기간이 달라 단리로 계산
+   만기이자 = 월납입액 × 연이율 × n(n+1)/2 ÷ 12  (n=총 납입 회차) */
+function savingProjection(a){
+  const rate=+a.rate||0, monthly=+a.monthly||0;
+  if(rate<=0||monthly<=0)return null;
+  const paid=Math.max(0,Math.round((a.balance||0)/monthly));   // 지금까지 납입 회차
+  const left=a.maturity?monthsUntil(a.maturity):0;
+  const n=Math.max(1,paid+left);
+  const principal=monthly*n;
+  const pre=Math.round(monthly*(rate/100)*(n*(n+1)/2)/12);
+  const tax=taxOf(a,pre);
+  return {n,paid,left,principal,pre,tax,net:pre-tax,total:principal+pre-tax};
+}
+/* 예금: 원금 × 이율 × 남은 기간 */
+function depositProjection(a){
+  const rate=+a.rate||0, bal=a.balance||0;
+  if(rate<=0||bal<=0)return null;
+  const left=a.maturity?monthsUntil(a.maturity):12;             // 만기 없으면 1년 기준
+  const pre=Math.round(bal*(rate/100)*left/12);
+  const tax=taxOf(a,pre);
+  return {left,pre,tax,net:pre-tax,total:bal+pre-tax};
+}
+/* 청약: 현재 잔액 기준 연 이자(단리, 근사) */
+function housingInterest(a){
+  const rate=+a.rate||0, bal=a.balance||0;
+  if(rate<=0||bal<=0)return null;
+  const pre=Math.round(bal*(rate/100));
+  const tax=taxOf(a,pre);
+  return {rate,pre,tax,net:pre-tax};
+}
 function assetRow(a){
   const m=ACC_META[a.type];
   let sub=a.bank?esc(a.bank):'';
@@ -1435,6 +1475,8 @@ function assetRow(a){
       sub+=` · 🔁 매월 ${a.payDay}일 ${from?esc(from.name):'출금계좌 없음'}`;
       if(hs.paidThisMonth>0)sub+=' <span class="pos">✓납입</span>';
     }
+    const hi=housingInterest(a);
+    if(hi)sub+=` · 연 ${hi.rate}% · 이자 ≈ <span class="pos">${fmtK(hi.net)}원/년</span>`;
     sub+=' · 출금 불가 🔒';
   }
   if(a.type==='saving'){
@@ -1444,9 +1486,15 @@ function assetRow(a){
       sub+=` · 🔁 매월 ${a.payDay}일 ${from?esc(from.name):'출금계좌 없음'}`;
       if(S.tx.some(t=>t.savingId===a.id&&ymOf(t.date)===thisYM()))sub+=' <span class="pos">✓납입</span>';
     }
+    const sp=savingProjection(a);
+    if(sp)sub+=` · 연 ${a.rate}% · 만기 예상 <b>${fmtK(sp.total)}원</b> (이자 <span class="pos">+${fmtK(sp.net)}</span>)`;
     sub+=' · 출금 불가 🔒';
   }
-  if(a.type==='deposit'&&a.maturity)sub+=(sub?' · ':'')+`${a.maturity} 만기`;
+  if(a.type==='deposit'){
+    if(a.maturity)sub+=(sub?' · ':'')+`${a.maturity} 만기`;
+    const dp=depositProjection(a);
+    if(dp)sub+=(sub?' · ':'')+`연 ${a.rate}% · 이자 <span class="pos">+${fmtK(dp.net)}원</span>${a.maturity?'':'/년'}`;
+  }
   if(a.type==='invest'){
     const put=S.invLogs.filter(l=>l.accountId===a.id).reduce((s,l)=>s+toKRW(l.amount,l.cur,l.fxAt),0);
     const pl=accKRW(a)-put;
@@ -1513,12 +1561,43 @@ function openAccModal(id,presetType){
       </div></details>`:''}
     <div class="tiny" style="margin:-6px 0 12px">${isHou?'🏠 청약통장은 묶인 돈으로 분류되고, <b>납입 회차·인정 납입액·소득공제</b>를 자동 계산해요.':'🔒 적금은 만기까지 묶인 돈으로 분류돼요.'}<br>💡 납입일·출금계좌를 정하면 <b>매달 자동으로 이체 처리</b>돼요 (출금계좌 → ${isHou?'청약':'적금'}).</div>`:''}
     ${isDep?`<div class="field"><label>만기일 (선택)</label><input type="date" id="ac-maturity" value="${a?a.maturity||'':''}"></div>`:''}
+    ${(isSav||isDep)?`<div class="grid2">
+      <div class="field"><label>연 이자율 (%)</label><input type="number" inputmode="decimal" step="any" id="ac-rate" value="${a?a.rate||'':''}" placeholder="예: 3.5" oninput="rateHint()"></div>
+      <div class="field"><label class="cb-row" style="margin-top:26px"><input type="checkbox" id="ac-taxfree" ${a&&a.taxFree?'checked':''} onchange="rateHint()"><span>비과세</span></label></div>
+    </div>
+    <div class="card tight" id="ac-rate-box" style="margin-bottom:12px;display:none"><div class="tiny" id="ac-rate-hint"></div></div>`:''}
     ${isInv&&a?`<button class="btn soft block" style="margin-bottom:10px" onclick="openInvLogModal('${a.id}')">＋ 투자금 납입 기록</button>`:''}
     <div style="display:flex;gap:8px;margin-top:6px">
       ${a?`<button class="btn ghost" style="flex:1" onclick="delAcc('${a.id}')">삭제</button>`:''}
       <button class="btn primary" style="flex:2" onclick="saveAcc('${a?a.id:''}','${type}')">저장</button>
     </div>`);
   if(isHou)houEstimate();
+  rateHint();
+}
+// 이자율 입력 시 예상 이자 미리보기
+function rateHint(){
+  const box=$('ac-rate-box'), h=$('ac-rate-hint'); if(!box||!h)return;
+  const rate=+val('ac-rate')||0;
+  if(rate<=0){box.style.display='none';return}
+  box.style.display='';
+  const tmp={balance:numVal('ac-bal'),monthly:$('ac-monthly')?numVal('ac-monthly'):0,
+    maturity:$('ac-maturity')?val('ac-maturity'):'',rate,taxFree:chkVal('ac-taxfree')};
+  const tax=tmp.taxFree?'비과세':'세후(15.4% 공제)';
+  let p;
+  if(tmp.monthly>0){                                  // 적금·청약 방식
+    p=savingProjection(tmp);
+    if(!p){h.innerHTML='월 납입액을 입력하면 예상 이자를 계산해요.';return}
+    h.innerHTML=`📈 총 ${p.n}회 납입 기준 · 원금 <b class="num">${fmt(p.principal)}</b>
+      <br>예상 이자 <b class="num pos">+${fmt(p.net)}</b> <span class="tiny">(${tax}${tmp.taxFree?'':' · 세전 '+fmt(p.pre)})</span>
+      <br>만기 예상 수령액 <b class="num">${fmt(p.total)}</b>
+      ${tmp.maturity?'':'<br><span style="color:var(--terra-deep)">만기일을 넣으면 더 정확해져요</span>'}`;
+  }else{                                              // 예금 방식
+    p=depositProjection(tmp);
+    if(!p){h.innerHTML='잔액을 입력하면 예상 이자를 계산해요.';return}
+    h.innerHTML=`📈 ${p.left}개월 기준 예상 이자 <b class="num pos">+${fmt(p.net)}</b>
+      <span class="tiny">(${tax})</span><br>만기 예상 수령액 <b class="num">${fmt(p.total)}</b>`;
+  }
+  h.innerHTML+=`<div class="tiny" style="margin-top:5px;color:var(--faint)">※ 단리 기준 추정치예요. 실제는 상품·우대조건에 따라 달라질 수 있어요.</div>`;
 }
 function acCurHint(){
   const c=$('ac-cur'), b=$('ac-bal'), h=$('ac-cur-hint');
@@ -1538,6 +1617,8 @@ function saveAcc(id,type){
     maturity:$('ac-maturity')?val('ac-maturity'):undefined,
     payDay:$('ac-payday')?(+val('ac-payday')||0):undefined,
     payFrom:$('ac-payfrom')?val('ac-payfrom'):undefined,
+    rate:$('ac-rate')?(+val('ac-rate')||0):undefined,
+    taxFree:$('ac-taxfree')?chkVal('ac-taxfree'):undefined,
     joinDate:$('ac-join')?val('ac-join'):undefined,
     roundsBase:$('ac-rbase')?(Math.round(numVal('ac-rbase'))||0):undefined,
     recogBase:$('ac-recbase')?(Math.round(numVal('ac-recbase'))||0):undefined,
@@ -1964,6 +2045,7 @@ function renderHousing(){
       </div>
       <div class="tiny" style="margin-top:9px">💰 소득공제 대상 <b class="num">${fmt(s.deductBase)}</b> / 한도 ${fmtK(s.dCap)}원
         · 공제액 약 <b class="num">${fmt(s.deductAmt)}</b></div>
+      ${(()=>{const hi=housingInterest(a);return hi?`<div class="tiny" style="margin-top:4px">📈 연 ${hi.rate}% · 예상 이자 <b class="num pos">+${fmt(hi.net)}</b>/년 ${a.taxFree?'(비과세)':'(세후)'}</div>`:''})()}
       ${gauge(s.dCap>0?s.deductBase/s.dCap*100:0,'var(--blue)',{style:'margin-top:6px'})}
       ${over?`<div class="tiny" style="margin-top:7px;color:var(--terra-deep)">⚠️ 이번 달 ${fmt(s.paidThisMonth)} 납입 — 월 인정 한도(${fmtK(s.cap)}원)를 넘는 ${fmtK(s.paidThisMonth-s.cap)}원은 회차 인정에 반영되지 않아요.</div>`
         :s.paidThisMonth?`<div class="tiny" style="margin-top:7px">이번 달 ${fmt(s.paidThisMonth)} 납입 완료 ✓</div>`
