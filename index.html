@@ -553,6 +553,9 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
     <div class="card tight" id="list-deposit"></div>
     <div class="sec-title">적금 · 묶인 돈 <span class="link" onclick="openAccModal(null,'saving')">+ 추가</span></div>
     <div class="card tight" id="list-saving"></div>
+    <div class="sec-title">주택청약 <span class="link" onclick="openAccModal(null,'housing')">+ 추가</span></div>
+    <div class="card tight" id="list-housing"></div>
+    <div class="card tight" id="housing-card"></div>
     <div class="sec-title">투자 <span class="link" onclick="openAccModal(null,'invest')">+ 추가</span></div>
     <div class="card tight" id="list-invest"></div>
     <div class="card" id="dca-card"></div>
@@ -709,8 +712,11 @@ const ACC_META={
   checking:{emo:'💳',label:'입출금',bg:'var(--blue-soft)'},
   deposit:{emo:'🏦',label:'예금',bg:'var(--green-soft)'},
   saving:{emo:'🔒',label:'적금',bg:'var(--gold-soft)'},
+  housing:{emo:'🏠',label:'청약',bg:'var(--blue-soft)'},
   invest:{emo:'📈',label:'투자',bg:'var(--terra-soft)'}
 };
+// 주택청약종합저축 기본값 (제도가 바뀌면 계좌별로 수정 가능)
+const HOUSING_DEF={recogCap:250000, deductCap:3000000, deductRate:0.4};
 
 /* ═════════ 유틸 ═════════ */
 const fmt=n=>Math.round(n).toLocaleString('ko-KR')+'원';
@@ -1400,9 +1406,9 @@ function moveAcc(id,dir){
 function renderAssets(){
   $('a-total').textContent=fmt(totalAssets());
   const inv=S.accounts.filter(a=>a.type==='invest').reduce((s,a)=>s+accKRW(a),0);
-  const locked=S.accounts.filter(a=>a.type==='saving'||a.type==='deposit').reduce((s,a)=>s+accKRW(a),0);
+  const locked=S.accounts.filter(a=>a.type==='saving'||a.type==='deposit'||a.type==='housing').reduce((s,a)=>s+accKRW(a),0);
   $('a-total-sub').textContent=`유동 ${fmtK(totalAssets()-inv-locked)}원 · 예적금 ${fmtK(locked)}원 · 투자 ${fmtK(inv)}원`;
-  for(const type of['checking','deposit','saving','invest']){
+  for(const type of['checking','deposit','saving','housing','invest']){
     const list=S.accounts.filter(a=>a.type===type);
     $('list-'+type).innerHTML=list.length?list.map(a=>assetRow(a)).join(''):
       `<div class="empty">${ACC_META[type].label} 자산을 추가해보세요</div>`;
@@ -1411,6 +1417,7 @@ function renderAssets(){
   if(ob){ob.textContent=ordMode?'✓ 순서 변경 완료':'순서 변경';ob.className='btn '+(ordMode?'primary':'ghost')+' sm';
     ob.style.display=S.accounts.length>1?'':'none';}
   renderFxChip();
+  renderHousing();
   renderDCA();
   renderGoals();
   renderRecon();
@@ -1420,6 +1427,16 @@ function renderAssets(){
 function assetRow(a){
   const m=ACC_META[a.type];
   let sub=a.bank?esc(a.bank):'';
+  if(a.type==='housing'){
+    const hs=housingStats(a);
+    sub+=(sub?' · ':'')+(a.monthly?`월 ${fmtK(a.monthly)}원 · `:'')+`${hs.rounds}회차`;
+    if(a.payDay&&a.payFrom){
+      const from=accById(a.payFrom);
+      sub+=` · 🔁 매월 ${a.payDay}일 ${from?esc(from.name):'출금계좌 없음'}`;
+      if(hs.paidThisMonth>0)sub+=' <span class="pos">✓납입</span>';
+    }
+    sub+=' · 출금 불가 🔒';
+  }
   if(a.type==='saving'){
     sub+=(sub?' · ':'')+(a.monthly?`월 ${fmtK(a.monthly)}원`:'')+(a.maturity?` · ${a.maturity} 만기`:'');
     if(a.payDay&&a.payFrom){
@@ -1451,9 +1468,9 @@ function assetRow(a){
 function openAccModal(id,presetType){
   const a=id?accById(id):null;
   const type=a?a.type:(presetType||'checking');
-  const isInv=type==='invest', isSav=type==='saving', isDep=type==='deposit';
+  const isInv=type==='invest', isHou=type==='housing', isSav=type==='saving'||isHou, isDep=type==='deposit';
   openModal(`${sheetHead(a?'자산 수정':ACC_META[type].label+' 추가')}
-    <div class="field"><label>이름</label><input id="ac-name" placeholder="${isInv?'예: ISA (한국투자증권)':isSav?'예: 청년희망적금':'예: 카카오뱅크 입출금'}" value="${a?esc(a.name):''}"></div>
+    <div class="field"><label>이름</label><input id="ac-name" placeholder="${isInv?'예: ISA (한국투자증권)':isHou?'예: 주택청약종합저축':isSav?'예: 청년희망적금':'예: 카카오뱅크 입출금'}" value="${a?esc(a.name):''}"></div>
     <div class="grid2">
       <div class="field"><label>기관</label><input id="ac-bank" placeholder="은행/증권사" value="${a?esc(a.bank||''):''}"></div>
       <div class="field"><label>통화</label>
@@ -1465,8 +1482,9 @@ function openAccModal(id,presetType){
       <input type="number" inputmode="decimal" step="any" id="ac-bal" value="${a?a.balance:''}" placeholder="0" oninput="acCurHint()">
       <div class="tiny" id="ac-cur-hint" style="margin-top:5px"></div></div>
     ${isSav?`<div class="grid2">
-      <div class="field"><label>월 납입액</label><input type="number" inputmode="numeric" id="ac-monthly" value="${a?a.monthly||'':''}" placeholder="0"></div>
-      <div class="field"><label>만기일</label><input type="date" id="ac-maturity" value="${a?a.maturity||'':''}"></div>
+      <div class="field"><label>월 납입액</label><input type="number" inputmode="numeric" id="ac-monthly" value="${a?a.monthly||'':''}" placeholder="${isHou?'100000':'0'}"></div>
+      ${isHou?`<div class="field"><label>가입일</label><input type="date" id="ac-join" value="${a?a.joinDate||'':''}"></div>`
+             :`<div class="field"><label>만기일</label><input type="date" id="ac-maturity" value="${a?a.maturity||'':''}"></div>`}
     </div>
     <div class="grid2">
       <div class="field"><label>납입일 (매월)</label>
@@ -1478,7 +1496,21 @@ function openAccModal(id,presetType){
           ${S.accounts.filter(x=>x.type==='checking'&&(!a||x.id!==a.id)).map(x=>`<option value="${x.id}" ${a&&a.payFrom===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}
         </select></div>
     </div>
-    <div class="tiny" style="margin:-6px 0 12px">🔒 적금은 만기까지 묶인 돈으로 분류돼요.<br>💡 납입일·출금계좌를 정하면 <b>매달 자동으로 이체 처리</b>돼요 (출금계좌 → 적금).</div>`:''}
+    ${isHou?`<details class="acc" style="margin-bottom:12px"><summary>청약 상세 설정 (선택)</summary>
+      <div style="padding:0 16px 14px">
+        <div class="grid2">
+          <div class="field"><label>이전 납입 회차</label><input type="number" inputmode="numeric" id="ac-rbase" value="${a?a.roundsBase||'':''}" placeholder="0">
+            <div class="tiny" style="margin-top:3px">앱에 기록하기 전까지의 회차</div></div>
+          <div class="field"><label>이전 인정 납입액</label><input type="number" inputmode="numeric" id="ac-recbase" value="${a?a.recogBase||'':''}" placeholder="0">
+            <div class="tiny" style="margin-top:3px">그때까지 인정된 금액</div></div>
+        </div>
+        <div class="grid2">
+          <div class="field" style="margin-bottom:0"><label>월 인정 한도</label><input type="number" inputmode="numeric" id="ac-recog" value="${a?a.recogCap||'':''}" placeholder="${HOUSING_DEF.recogCap}"></div>
+          <div class="field" style="margin-bottom:0"><label>연 소득공제 한도</label><input type="number" inputmode="numeric" id="ac-dcap" value="${a?a.deductCap||'':''}" placeholder="${HOUSING_DEF.deductCap}"></div>
+        </div>
+        <div class="tiny" style="margin-top:8px">비워두면 기본값(월 ${fmtK(HOUSING_DEF.recogCap)}원 · 연 ${fmtK(HOUSING_DEF.deductCap)}원)을 써요. 제도가 바뀌거나 조건이 다르면 여기서 조정하세요.</div>
+      </div></details>`:''}
+    <div class="tiny" style="margin:-6px 0 12px">${isHou?'🏠 청약통장은 묶인 돈으로 분류되고, <b>납입 회차·인정 납입액·소득공제</b>를 자동 계산해요.':'🔒 적금은 만기까지 묶인 돈으로 분류돼요.'}<br>💡 납입일·출금계좌를 정하면 <b>매달 자동으로 이체 처리</b>돼요 (출금계좌 → ${isHou?'청약':'적금'}).</div>`:''}
     ${isDep?`<div class="field"><label>만기일 (선택)</label><input type="date" id="ac-maturity" value="${a?a.maturity||'':''}"></div>`:''}
     ${isInv&&a?`<button class="btn soft block" style="margin-bottom:10px" onclick="openInvLogModal('${a.id}')">＋ 납입(매수) 기록 추가</button>`:''}
     <div style="display:flex;gap:8px;margin-top:6px">
@@ -1503,7 +1535,12 @@ function saveAcc(id,type){
     monthly:$('ac-monthly')?Math.round(numVal('ac-monthly')):undefined,
     maturity:$('ac-maturity')?val('ac-maturity'):undefined,
     payDay:$('ac-payday')?(+val('ac-payday')||0):undefined,
-    payFrom:$('ac-payfrom')?val('ac-payfrom'):undefined};
+    payFrom:$('ac-payfrom')?val('ac-payfrom'):undefined,
+    joinDate:$('ac-join')?val('ac-join'):undefined,
+    roundsBase:$('ac-rbase')?(Math.round(numVal('ac-rbase'))||0):undefined,
+    recogBase:$('ac-recbase')?(Math.round(numVal('ac-recbase'))||0):undefined,
+    recogCap:$('ac-recog')?(Math.round(numVal('ac-recog'))||0):undefined,
+    deductCap:$('ac-dcap')?(Math.round(numVal('ac-dcap'))||0):undefined};
   if(data.payDay&&!data.payFrom)return toast('자동납입하려면 출금 계좌를 선택해주세요');
   if(data.payDay&&!data.monthly)return toast('자동납입하려면 월 납입액을 입력해주세요');
   // 자동납입을 새로 켤 때, 이번 달 납입일이 이미 지났으면 이번 달은 건너뜀
@@ -1820,11 +1857,70 @@ function autoApplyFixed(){ // 결제일 지난 고정 항목 자동 기록 (지�
   if(ne||ni){save();toast(`고정 ${ne?`지출 ${ne}건`:''}${ne&&ni?' · ':''}${ni?`수입 ${ni}건`:''}을 자동 기록했어요`)}
 }
 
+/* ═════════ 주택청약 ═════════ */
+// 이 청약통장으로 들어간 납입 내역(자동납입 이체 + 수동 이체)을 월별로 집계
+function housingPayments(a){
+  const byM={};
+  S.tx.filter(t=>t.type==='transfer'&&t.toId===a.id).forEach(t=>{
+    byM[ymOf(t.date)]=(byM[ymOf(t.date)]||0)+t.amount;
+  });
+  return byM;                                   // { '2026-07': 100000, … }
+}
+function housingStats(a){
+  const cap=a.recogCap||HOUSING_DEF.recogCap;   // 월 인정 한도
+  const byM=housingPayments(a);
+  const months=Object.keys(byM).sort();
+  // 납입 회차 = 납입한 달 수 (앱 기록 기준) + 가입 전 회차 보정값
+  const rounds=(a.roundsBase||0)+months.length;
+  // 인정 납입액 = 매달 min(납입액, 한도) 합
+  const recognized=months.reduce((s,m)=>s+Math.min(byM[m],cap),0)+(a.recogBase||0);
+  // 올해 납입액 (소득공제 대상)
+  const yr=todayStr().slice(0,4);
+  const thisYear=months.filter(m=>m.startsWith(yr)).reduce((s,m)=>s+byM[m],0);
+  const dCap=a.deductCap||HOUSING_DEF.deductCap;
+  const deductBase=Math.min(thisYear,dCap);
+  // 가입 기간(개월)
+  let ageM=0;
+  if(a.joinDate){
+    const [jy,jm]=a.joinDate.split('-').map(Number);
+    const now=new Date(); ageM=Math.max(0,(now.getFullYear()-jy)*12+(now.getMonth()+1-jm));
+  }
+  return {cap,byM,months,rounds,recognized,thisYear,dCap,deductBase,
+    deductAmt:Math.round(deductBase*(a.deductRate||HOUSING_DEF.deductRate)),
+    ageM, paidThisMonth:byM[thisYM()]||0};
+}
+function renderHousing(){
+  const el=$('housing-card'); if(!el)return;
+  const list=S.accounts.filter(a=>a.type==='housing');
+  if(!list.length){el.innerHTML='';el.style.display='none';return}
+  el.style.display='';
+  el.innerHTML=list.map(a=>{
+    const s=housingStats(a);
+    const over=s.paidThisMonth>s.cap;
+    return `<div style="margin-bottom:${list.length>1?'14px':'0'}">
+      <div class="row" style="margin-bottom:8px"><b style="font-size:.92rem">🏠 ${esc(a.name)}</b>
+        <span class="tiny">${s.ageM?`가입 ${Math.floor(s.ageM/12)}년 ${s.ageM%12}개월`:''}</span></div>
+      <div class="hero-grid" style="margin-top:0">
+        <div class="cell"><div class="k">납입 회차</div><div class="v num">${s.rounds}회</div></div>
+        <div class="cell"><div class="k">인정 납입액</div><div class="v num">${fmtK(s.recognized)}</div></div>
+        <div class="cell"><div class="k">올해 납입</div><div class="v num">${fmtK(s.thisYear)}</div></div>
+      </div>
+      <div class="tiny" style="margin-top:9px">💰 소득공제 대상 <b class="num">${fmt(s.deductBase)}</b> / 한도 ${fmtK(s.dCap)}원
+        · 공제액 약 <b class="num">${fmt(s.deductAmt)}</b></div>
+      ${gauge(s.dCap>0?s.deductBase/s.dCap*100:0,'var(--blue)',{style:'margin-top:6px'})}
+      ${over?`<div class="tiny" style="margin-top:7px;color:var(--terra-deep)">⚠️ 이번 달 ${fmt(s.paidThisMonth)} 납입 — 월 인정 한도(${fmtK(s.cap)}원)를 넘는 ${fmtK(s.paidThisMonth-s.cap)}원은 회차 인정에 반영되지 않아요.</div>`
+        :s.paidThisMonth?`<div class="tiny" style="margin-top:7px">이번 달 ${fmt(s.paidThisMonth)} 납입 완료 ✓</div>`
+        :`<div class="tiny" style="margin-top:7px">이번 달 아직 납입 전이에요.</div>`}
+      <div class="tiny" style="margin-top:6px;color:var(--faint)">※ 인정 한도·공제 한도는 제도에 따라 달라질 수 있어요. 계좌 수정에서 바꿀 수 있습니다.</div>
+    </div>`;
+  }).join('<div class="divider"></div>');
+}
+
 /* 적금 자동납입: 납입일이 지나면 출금계좌 → 적금계좌로 이체 기록 */
 function autoApplySaving(){
   const ym=thisYM(), day=new Date().getDate();
   let n=0, skipped=[];
-  S.accounts.filter(a=>a.type==='saving'&&a.payDay>0&&a.monthly>0&&a.payFrom).forEach(a=>{
+  S.accounts.filter(a=>(a.type==='saving'||a.type==='housing')&&a.payDay>0&&a.monthly>0&&a.payFrom).forEach(a=>{
     if(a.payDay>day)return;                                        // 아직 납입일 전
     if(a.payFrom_start&&`${ym}-${pad(a.payDay)}`<a.payFrom_start)return; // 설정 전의 지난 납입일은 건너뜀
     if(a.maturity&&a.maturity<`${ym}-${pad(a.payDay)}`)return;      // 만기 지남
@@ -2393,9 +2489,9 @@ function recentMonthlySaving(){
   const mid=Math.floor(vals.length/2);
   return Math.round(vals.length%2?vals[mid]:(vals[mid-1]+vals[mid])/2);
 }
-// 적금 월 자동납입 합계(만기 전까지 유지되는 강제저축)
+// 적금·청약 월 자동납입 합계(만기 전까지 유지되는 강제저축)
 function monthlyAutoSaving(){
-  return S.accounts.filter(a=>a.type==='saving'&&a.monthly>0)
+  return S.accounts.filter(a=>(a.type==='saving'||a.type==='housing')&&a.monthly>0)
     .filter(a=>!a.maturity||a.maturity>=todayStr())
     .reduce((s,a)=>s+a.monthly,0);
 }
