@@ -3559,8 +3559,17 @@ function renderPickRate(){
   const ym=thisYM();
   if(!S.cards.length){el.style.display='none';el.innerHTML='';return}
   el.style.display='';
-  const rows=S.cards.map(c=>({c,p:pickRate(c,ym)})).filter(x=>x.p.spend>0);
-  if(!rows.length){el.innerHTML=`<div style="font-weight:800;font-size:.92rem">📊 카드 피킹률</div><div class="empty">이번 달 카드 사용 내역이 쌓이면<br>피킹률을 계산해드려요</div>`;return}
+  const used=S.cards.map(c=>({c,p:pickRate(c,ym)})).filter(x=>x.p.spend>0);
+  // 혜택을 등록하지 않은 카드는 계산에서 제외 (0%로 잡혀 전체 피킹률을 왜곡하므로)
+  const rows=used.filter(x=>(x.c.perks||[]).length>0);
+  const noPerk=used.filter(x=>!(x.c.perks||[]).length);
+  const noPerkNote=noPerk.length?`<div class="tiny" style="margin-top:10px">ℹ️ 혜택을 등록하지 않은 카드 ${noPerk.length}장(${noPerk.map(x=>esc(x.c.name)).join(', ')})은 계산에서 제외했어요.
+    <span style="color:var(--terra);cursor:pointer;font-weight:700" onclick="switchView('cards')">혜택 등록하기</span></div>`:'';
+  if(!rows.length){
+    el.innerHTML=`<div style="font-weight:800;font-size:.92rem">📊 카드 피킹률</div>
+      <div class="empty">${used.length?'카드에 혜택을 등록하면<br>피킹률을 계산해드려요':'이번 달 카드 사용 내역이 쌓이면<br>피킹률을 계산해드려요'}</div>${noPerkNote}`;
+    return;
+  }
   const totSpend=rows.reduce((s,x)=>s+x.p.spend,0), totGot=rows.reduce((s,x)=>s+x.p.got,0);
   const totRate=totSpend>0?totGot/totSpend*100:0;
   const tt=pickTier(totRate);
@@ -3591,6 +3600,7 @@ function renderPickRate(){
            <span class="a-txt"><b>${a.t}</b><br><span class="tiny">${a.d}</span></span></div>`).join('')}</div>`
           :`<div class="tiny" style="margin-top:7px">✅ 이 카드는 지금 잘 쓰고 있어요.</div>`}
       </div>`}).join('')}
+    ${noPerkNote}
     <div class="tiny" style="margin-top:10px">피킹률은 등록한 혜택 정보 기준 <b>예상치</b>예요. 실제 적립은 카드사 기준을 따릅니다.</div>`;
 }
 function benchBar(rate){
