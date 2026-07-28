@@ -3819,9 +3819,41 @@ function openSettings(){
     <input type="file" id="st-file" accept=".json" style="display:none" onchange="importData(this)">
     <button class="btn ghost block" style="margin-top:10px" onclick="openVersionsModal()">⏱️ 버전 복원 (타임머신)</button>
     <div class="divider"></div>
-    <button class="btn ghost block" style="color:var(--danger)" onclick="if(confirm('모든 데이터를 삭제할까요? 되돌릴 수 없어요.')){localStorage.removeItem(KEY);location.reload()}">전체 초기화</button>
+    <button class="btn ghost block" style="color:var(--danger)" onclick="openResetModal()">전체 초기화</button>
     <div class="tiny" style="text-align:center;margin-top:14px">Claude Flow · 클라우드 동기화를 켜지 않으면 데이터는 이 기기에만 저장됩니다</div>`);
   refreshPushBtn();
+}
+/* ═════════ 전체 초기화 (클라우드 인식) ═════════ */
+function openResetModal(){
+  const signed=!!(window.Sync&&Sync.signedIn&&Sync.signedIn());
+  openModal(`${sheetHead('전체 초기화')}
+    <div class="card tight warn" style="margin-bottom:12px">
+      <div class="w-title">⚠️ 되돌릴 수 없어요</div>
+      <div class="w-body">계좌·카드·내역·예산·목표 등 <b>모든 기록</b>이 사라져요. 먼저 백업해두는 걸 권해요.</div>
+      <button class="btn ghost sm" onclick="exportData()">💾 백업 파일 내보내기</button></div>
+    ${signed?`<div class="tiny" style="margin-bottom:10px">☁️ 클라우드 동기화가 켜져 있어요. <b>클라우드까지 지우지 않으면 앱을 다시 켤 때 복원됩니다.</b></div>
+      <button class="btn block" style="background:var(--danger);color:#fff;margin-bottom:8px" onclick="resetAll('cloud')">
+        모든 기기에서 초기화 (클라우드 포함)</button>
+      <div class="tiny" style="margin-bottom:14px">폰·패드·PC 전부 비워져요. 로그인은 그대로 유지돼요.</div>
+      <button class="btn ghost block" onclick="resetAll('local')">이 기기만 초기화 + 동기화 연결 해제</button>
+      <div class="tiny" style="margin-top:5px">클라우드 데이터는 남겨두고 이 기기만 비워요.</div>`
+    :`<button class="btn block" style="background:var(--danger);color:#fff" onclick="resetAll('local')">전체 초기화</button>`}`);
+}
+async function resetAll(scope){
+  const msg=scope==='cloud'
+    ? '클라우드를 포함해 모든 기기의 데이터를 삭제할까요?\n되돌릴 수 없어요.'
+    : '이 기기의 데이터를 삭제할까요?\n되돌릴 수 없어요.';
+  if(!confirm(msg))return;
+  try{
+    if(scope==='cloud'){ toast('클라우드 초기화 중…'); await Sync.wipeCloud(); }
+    else if(window.Sync&&Sync.configured&&Sync.configured()){ await Sync.disconnect(); }  // 다시 내려받지 않도록 연결 해제
+  }catch(e){ toast('클라우드 초기화 실패 — '+(e.message||'')); return; }
+  try{
+    localStorage.removeItem(KEY);
+    localStorage.removeItem('claudeflow_sync_rev');
+    localStorage.removeItem('claudeflow_conflict_backup');
+  }catch(e){}
+  location.reload();
 }
 function exportData(){
   const blob=new Blob([JSON.stringify(S,null,2)],{type:'application/json'});

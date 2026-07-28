@@ -280,6 +280,24 @@
       }).catch(function (e) { self.setStatus('error', self._msg(e)); });
     },
 
+    /* 클라우드 데이터 비우기 — 전체 초기화용.
+     * 빈 상태를 새 리비전으로 올려서, 다른 기기들도 다음 접속 때 초기화된다. */
+    wipeCloud: function () {
+      if (!this.client || !this.session) return Promise.reject(new Error('로그인이 필요해요'));
+      var self = this;
+      var empty = { accounts: [], cards: [], tx: [], fixed: [], invLogs: [], reports: {}, settings: {} };
+      var nextRev = (this.knownRev || 0) + 1;
+      return this.client.from(TABLE).upsert({
+        user_id: this.session.user.id, data: empty, rev: nextRev, updated_at: new Date().toISOString()
+      }, { onConflict: 'user_id' }).then(function (res) {
+        if (res.error) throw res.error;
+        self.knownRev = nextRev;
+        self.dirty = false;
+        clearTimeout(self._timer);                    // 대기 중이던 업로드 취소
+        try { localStorage.setItem(REV_KEY, String(nextRev)); } catch (e) {}
+      });
+    },
+
     /* 사용자가 수동으로 "지금 동기화" 눌렀을 때 */
     syncNow: function () {
       if (!this.session) return Promise.resolve();
