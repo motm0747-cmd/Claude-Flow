@@ -184,23 +184,29 @@
           if (res.error) throw res.error;
           var row = res.data;                 // { data, rev } | null
           var local = self.readLocal();
+          var remoteRev = row ? (row.rev || 0) : 0;
 
-          // 1) 클라우드가 비었음 → 로컬이 있으면 올려서 시드, 없으면 완료
-          if (!row || self.isEmpty(row.data)) {
+          // 1) 클라우드에 행 자체가 없음 → 로컬이 있으면 올려서 시드
+          if (!row) {
             if (!self.isEmpty(local)) { self.dirty = true; return self.push(true); }
             self.setStatus('synced'); return;
           }
-          // 2) 로컬이 비었음 → 원격 채택(첫 기기 동기화)
-          if (self.isEmpty(local)) { return self.adopt(row, applyToApp); }
+          // 2) 비었고 한 번도 기록된 적 없음(rev 0) → 첫 동기화이므로 로컬로 시드
+          //    ⚠️ rev가 올라가 있는데 비어 있으면 '다른 기기에서 일부러 초기화한 것'이므로
+          //       여기서 되돌려 올리면 안 된다. 아래 리비전 비교로 넘어간다.
+          if (self.isEmpty(row.data) && remoteRev === 0) {
+            if (!self.isEmpty(local)) { self.dirty = true; return self.push(true); }
+            self.setStatus('synced'); return;
+          }
 
-          // 3) 양쪽 다 있음 → 리비전 비교
-          var remoteRev = row.rev || 0;
+          // 3) 리비전 비교 — 초기화(빈 상태)도 하나의 정상 리비전으로 취급
           if (remoteRev > self.knownRev) {
-            // 원격이 더 최신 → 로컬 백업 후 채택
-            self.backupLocal(local);
+            // 원격이 더 최신 → 로컬 백업 후 채택 (비어 있으면 이 기기도 초기화됨)
+            if (!self.isEmpty(local)) self.backupLocal(local);
             return self.adopt(row, applyToApp);
           } else if (remoteRev < self.knownRev) {
-            // 로컬이 더 최신 → 올림
+            // 로컬이 더 최신 → 올림. 단 로컬이 비어 있으면 클라우드를 지우지 않고 받아온다.
+            if (self.isEmpty(local)) return self.adopt(row, applyToApp);
             self.dirty = true; return self.push(true);
           } else {
             self.setStatus('synced'); // 같은 리비전 → 동일하다고 간주
@@ -286,16 +292,46 @@
       if (!this.client || !this.session) return Promise.reject(new Error('로그인이 필요해요'));
       var self = this;
       var empty = { accounts: [], cards: [], tx: [], fixed: [], invLogs: [], reports: {}, settings: {} };
-      var nextRev = (this.knownRev || 0) + 1;
-      return this.client.from(TABLE).upsert({
-        user_id: this.session.user.id, data: empty, rev: nextRev, updated_at: new Date().toISOString()
-      }, { onConflict: 'user_id' }).then(function (res) {
-        if (res.error) throw res.error;
-        self.knownRev = nextRev;
-        self.dirty = false;
-        clearTimeout(self._timer);                    // 대기 중이던 업로드 취소
-        try { localStorage.setItem(REV_KEY, String(nextRev)); } catch (e) {}
+      // 다른 기기가 먼저 올려둔 리비전이 있을 수 있으므로 현재 값을 읽고 그 위로 올린다
+      return this._nextRev().then(function (nextRev) {
+        return self.client.from(TABLE).upsert({
+          user_id: self.session.user.id, data: empty, rev: nextRev, updated_at: new Date().toISOString()
+        }, { onConflict: 'user_id' }).then(function (res) {
+          if (res.error) throw res.error;
+          self.knownRev = nextRev;
+          self.dirty = false;
+          clearTimeout(self._timer);                  // 대기 중이던 업로드 취소
+          try { localStorage.setItem(REV_KEY, String(nextRev)); } catch (e) {}
+        });
       });
+    },
+
+    // 클라우드의 현재 리비전 +1 (내 knownRev 보다도 항상 크게)
+    _nextRev: function () {
+      var self = this;
+      return this.client.from(TABLE).select('rev').eq('user_id', this.session.user.id).maybeSingle()
+        .then(function (res) {
+          var cur = (res && res.data && res.data.rev) || 0;
+          return Math.max(cur, self.knownRev || 0) + 1;
+        })
+        .catch(function () { return (self.knownRev || 0) + 1; });
+    },
+
+    /* 이 기기 내용을 클라우드와 모든 기기에 강제로 덮어쓰기 — 충돌 복구용 */
+    forcePush: function () {
+      if (!this.client || !this.session) return Promise.reject(new Error('로그인이 필요해요'));
+      var self = this, local = this.readLocal();
+      this.setStatus('syncing');
+      return this._nextRev().then(function (nextRev) {
+        return self.client.from(TABLE).upsert({
+          user_id: self.session.user.id, data: local, rev: nextRev, updated_at: new Date().toISOString()
+        }, { onConflict: 'user_id' }).then(function (res) {
+          if (res.error) throw res.error;
+          self.knownRev = nextRev; self.dirty = false;
+          try { localStorage.setItem(REV_KEY, String(nextRev)); } catch (e) {}
+          self.setStatus('synced');
+        });
+      }).catch(function (e) { self.setStatus('error', self._msg(e)); throw e; });
     },
 
     /* 사용자가 수동으로 "지금 동기화" 눌렀을 때 */

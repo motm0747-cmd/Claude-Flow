@@ -3950,7 +3950,9 @@ async function resetAll(scope){
   }catch(e){ toast('클라우드 초기화 실패 — '+(e.message||'')); return; }
   try{
     localStorage.removeItem(KEY);
-    localStorage.removeItem('claudeflow_sync_rev');
+    // 클라우드 초기화는 리비전을 그대로 둬야 다른 기기가 '초기화됨'으로 인식한다.
+    // (지우면 카운터가 0으로 돌아가 다른 기기의 옛 데이터가 더 최신으로 오인됨)
+    if(scope!=='cloud')localStorage.removeItem('claudeflow_sync_rev');
     localStorage.removeItem('claudeflow_conflict_backup');
   }catch(e){}
   location.reload();
@@ -4376,6 +4378,8 @@ function renderSyncSection(){
       <button class="btn ghost block" style="margin-top:8px;font-size:.8rem;color:var(--sub)" onclick="syncDisconnect()">이 기기 연결 해제</button>`;
   } else {
     inner=`<div class="row" style="margin-bottom:10px"><span class="muted" style="font-size:.85rem">${esc(Sync.email())}</span><button class="btn soft sm" onclick="syncNow()">지금 동기화</button></div>
+      <button class="btn ghost block" style="margin-bottom:8px" onclick="syncForcePush()">⬆️ 이 기기 내용을 모든 기기에 덮어쓰기</button>
+      <div class="tiny" style="margin-bottom:10px">기기마다 데이터가 어긋났을 때, 지금 이 기기 상태를 기준으로 맞춰요.</div>
       <div class="grid2"><button class="btn ghost" onclick="syncSignOut()">로그아웃</button><button class="btn ghost" style="color:var(--danger)" onclick="syncDisconnect()">연결 해제</button></div>`;
   }
   return `<div class="card tight" style="margin-bottom:14px">
@@ -4394,6 +4398,12 @@ function syncSignOut(){ Sync.signOut().then(()=>{toast('로그아웃했어요');
 function syncDisconnect(){ if(!confirm('이 기기의 클라우드 연결을 해제할까요? 로컬 데이터는 그대로 남아요.'))return;
   Sync.disconnect().then(()=>{toast('연결을 해제했어요');openSettings();}); }
 function syncNow(){ toast('동기화 중…'); Sync.syncNow().then(()=>toast('동기화했어요')); }
+function syncForcePush(){
+  if(!confirm('지금 이 기기의 내용으로 클라우드와 다른 기기를 모두 덮어쓸까요?\n다른 기기에만 있던 변경은 사라져요.'))return;
+  toast('덮어쓰는 중…');
+  Sync.forcePush().then(()=>{toast('이 기기 기준으로 맞췄어요');openSettings();})
+    .catch(e=>toast('실패 — '+(e.message||'')));
+}
 
 /* ═════════ 버전 복원(타임머신) ═════════ */
 function openVersionsModal(){
