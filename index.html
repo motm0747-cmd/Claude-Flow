@@ -427,7 +427,10 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 <div id="app">
   <header>
     <div class="wordmark">Claude <em>Flow</em></div>
-    <button class="icon-btn" onclick="openSettings()" aria-label="설정">⚙︎</button>
+    <div style="display:flex;gap:8px">
+      <button class="icon-btn" onclick="openAskModal()" aria-label="AI에게 물어보기" title="AI에게 물어보기">✦</button>
+      <button class="icon-btn" onclick="openSettings()" aria-label="설정">⚙︎</button>
+    </div>
   </header>
 
   <!-- ─────────── 홈 ─────────── -->
@@ -654,6 +657,7 @@ function migrate(){
   S.cats=S.cats||null;              // 커스텀 카테고리 (null이면 기본값)
   S.quick=S.quick||[];              // 빠른 입력 즐겨찾기
   S.quickHide=S.quickHide||[];      // 빠른 입력에서 숨긴 항목(자동 추천 포함)
+  S.askLog=S.askLog||[];            // AI 대화 기록
   S.notify=S.notify||{budget:true,card:true,fixed:true,inactive:true}; // 알림 종류
   S.fixed.forEach(f=>{ if(!f.kind)f.kind='expense'; if(f.from===undefined)f.from=''; if(f.to===undefined)f.to=''; });
   S.cards.forEach(c=>{ if(c.annualFee===undefined)c.annualFee=0; });
@@ -2418,7 +2422,8 @@ async function genReport(ym){
   let headline=ruleHeadline(st,ym), aiText=ruleCommentary(st), tips=ruleTips(st), byAI=false, aiFail='';
   if(aiEnabled()){
     try{
-      const prompt=`너는 한국 대학생 사회초년생을 위한 따뜻하지만 직설적인 재무 코치야. 아래 ${ymLabel(ym)} 가계부 데이터를 분석해서 JSON으로만 답해. 형식: {"headline":"신문 헤드라인 같은 한 문장(25자 내외)","commentary":"소비 패턴 해설 3~4문장. 구체적 숫자 인용","tips":["다음 달 실천 팁1","팁2","팁3"]}
+      const prompt=`${AI_PERSONA}\n아래 ${ymLabel(ym)} 가계부를 분석해서 JSON으로만 답해. 형식: {"headline":"신문 헤드라인 같은 한 문장(25자 내외)","commentary":"소비 패턴 해설 3~4문장. 구체적 숫자와 항목명 인용","tips":["다음 달 실천 팁1","팁2","팁3"]}
+팁은 반드시 내 데이터에 근거해서 써. 목표·위시리스트가 있으면 언제 달성 가능한지, 카드 실적이 부족하면 얼마나 더 쓰면 되는지처럼 구체적으로.${aiCtx(ym)}
 데이터: 수입 ${st.inc}원(전월대비 ${st.incD===null?'비교불가':st.incD.toFixed(0)+'%'}), 지출 ${st.exp}원(전월대비 ${st.expD===null?'비교불가':st.expD.toFixed(0)+'%'}), 저축률 ${st.saveRate}%, 지출TOP3 ${st.top3.map(([c,v])=>`${c} ${v}원`).join(', ')||'없음'}, 최대 단일지출 ${st.maxTx?`${st.maxTx.memo||st.maxTx.cat} ${st.maxTx.amount}원`:'없음'}, 카테고리별 상세 ${JSON.stringify(catSums(ym).slice(0,8))}`;
       const out=await gemini(prompt);
       const j=JSON.parse(out.replace(/```json|```/g,'').trim());
@@ -2429,6 +2434,60 @@ async function genReport(ym){
   save();repYM=ym;renderReport();
   toast(aiFail?('기본 해설로 생성 · AI 실패: '+aiFail):'리포트를 저장했어요 ✓');
 }
+/* ═════════ AI 재무 프로필 ═════════
+   AI에게 '익명 통계'가 아니라 '이 사람의 재무 상황' 전체를 넘겨 초개인화한다.
+   없는 항목은 넣지 않아 프롬프트를 가볍게 유지. */
+function aiProfile(ym){
+  const M=ym||thisYM(), P=prevYM(M);
+  const t=totals(M), pv=totals(P);
+  const p={
+    오늘:todayStr(), 기준월:M,
+    순자산:Math.round(netAssets()), 총자산:Math.round(totalAssets()),
+    이번달:{수입:t.inc, 지출:t.exp, 수지:t.bal},
+    지난달:{수입:pv.inc, 지출:pv.exp},
+    카테고리별지출:catSums(M).slice(0,10).map(([c,v])=>({항목:c,금액:v}))
+  };
+  try{
+    const bp=budgetPace(M);
+    if(bp)p.예산={총액:bp.total,사용:bp.spent,진행률:Math.round(bp.pct)+'%',
+      월말예상:bp.predicted,초과예상:bp.over,하루가능액:bp.dailyLeft};
+  }catch(e){}
+  if(S.goals&&S.goals.length)p.저축목표=S.goals.map(g=>({
+    이름:g.name,목표:g.target,모은돈:Math.round(g.saved||0),
+    남은돈:Math.max(0,g.target-(g.saved||0)),기한:g.due||'미정'}));
+  const wish=(S.wish||[]).filter(w=>w.status==='open');
+  if(wish.length)p.사고싶은것=wish.map(w=>({이름:w.name,가격:w.amount,담은날:w.date}));
+  const fx=(S.fixed||[]).filter(f=>f.active!==false);
+  if(fx.length)p.매달고정=fx.map(f=>({이름:f.name,금액:f.amount,날짜:f.day+'일',
+    구분:(f.kind||'expense')==='income'?'수입':'지출'}));
+  const sav=S.accounts.filter(a=>(a.type==='saving'||a.type==='housing')&&a.monthly>0);
+  if(sav.length)p.강제저축=sav.map(a=>{
+    const o={이름:a.name,종류:a.type==='housing'?'청약':'적금',월납입:a.monthly,잔액:Math.round(a.balance||0)};
+    if(a.maturity)o.만기=a.maturity;
+    if(a.type==='housing'){try{o.회차=housingStats(a).rounds}catch(e){}}
+    return o;});
+  if(S.cards.length)p.카드=S.cards.map(c=>{
+    let spend=0,got=0,rate=0;
+    try{ spend=cardMonthSpend(c.id,M); const pr=pickRate(c,M); got=Math.round(pr.got); rate=pr.rate; }catch(e){}
+    const target=c.target||((c.tiers&&c.tiers.length)?Math.min(...c.tiers):0);
+    const o={이름:c.name,종류:c.type==='credit'?'신용':'체크',이번달사용:spend,
+      예상혜택:got,피킹률:rate.toFixed(2)+'%',혜택:(c.perks||[]).map(k=>`${k.name}(${k.cat})`)};
+    if(target){o.실적기준=target; if(spend<target)o.실적부족=target-spend;}
+    return o;});
+  try{ const recv=debtSum('receivable'), pay=debtSum('payable');
+    if(recv||pay)p.돈거래={받을돈:recv,갚을돈:pay}; }catch(e){}
+  try{ const sp=spendProfile(); if(sp&&sp.traits)p.소비성향=sp.traits.map(x=>x.t); }catch(e){}
+  try{ const hs=healthScore(M); if(hs)p.건강점수={총점:hs.total,세부:hs.parts}; }catch(e){}
+  const memo={};
+  monthTx(M).filter(x=>x.type==='expense'&&x.memo).forEach(x=>{
+    memo[x.memo]=memo[x.memo]||{건수:0,금액:0}; memo[x.memo].건수++; memo[x.memo].금액+=x.amount;});
+  const top=Object.entries(memo).sort((a,b)=>b[1].금액-a[1].금액).slice(0,8);
+  if(top.length)p.자주쓴곳=top.map(([n,v])=>({곳:n,건수:v.건수,금액:v.금액}));
+  return p;
+}
+const AI_PERSONA=`너는 한국 대학생·사회초년생 전용 재무 코치야. 따뜻하지만 직설적이고, 두루뭉술한 일반론 대신 아래 '내 재무 데이터'의 실제 숫자와 항목명(목표 이름, 카드 이름, 가맹점 등)을 인용해서 말해. 잘하고 있는 건 인정해주고, 바로 실행할 수 있는 다음 행동을 제시해. 데이터에 없는 건 지어내지 마.`;
+const aiCtx=ym=>`\n\n[내 재무 데이터]\n${JSON.stringify(aiProfile(ym),null,0)}`;
+
 function aiEnabled(){ return !!(window.Sync && Sync.aiReady && Sync.aiReady()) || !!(S.settings&&S.settings.gemini); }
 async function gemini(prompt){
   // 1) 클라우드 로그인 상태면 서버 함수(Edge Function) 우선 — 키 노출 없음, 모든 기기 공용
@@ -2510,7 +2569,9 @@ async function genWeekly(){
   let text=ruleWeekly(cur,prev),byAI=false,aiFail='';
   if(aiEnabled()){
     try{
-      const prompt=`너는 한국 대학생을 위한 따뜻하지만 직설적인 재무 코치야. 아래 주간 가계부를 3~4문장으로 요약하고 다음 주 조언 1가지를 붙여. 순수 문장만 출력(JSON·마크다운 금지). 최근 7일: 지출 ${cur.exp}원, 수입 ${cur.inc}원, 지출 TOP ${cur.top.map(([c,v])=>c+' '+v+'원').join(', ')||'없음'}. 직전 7일: 지출 ${prev.exp}원. 오늘은 ${todayStr()}.`;
+      const prompt=`${AI_PERSONA}\n아래 주간 가계부를 3~4문장으로 요약하고 다음 주 조언 1가지를 붙여. 순수 문장만 출력(JSON·마크다운 금지).
+최근 7일: 지출 ${cur.exp}원, 수입 ${cur.inc}원, 지출 TOP ${cur.top.map(([c,v])=>c+' '+v+'원').join(', ')||'없음'}. 직전 7일: 지출 ${prev.exp}원.
+조언은 아래 내 데이터(목표·예산·카드 실적·고정비 일정)를 근거로 이번 주에 바로 할 수 있는 것으로.${aiCtx()}`;
       const out=(await gemini(prompt)).trim();
       if(out){text=out;byAI=true;clearAIFail()}
     }catch(e){noteAIFail(e);aiFail=e.message}
@@ -4140,6 +4201,76 @@ function addQuickFromTx(id){
   S.quick=S.quick.slice(0,6);
   commit('빠른 입력에 추가했어요');
 }
+
+/* ═════════ AI에게 물어보기 (대화형) ═════════ */
+let askBusy=false;
+const ASK_SUGGEST=[
+  '이번 달 왜 이렇게 많이 썼어?',
+  '다음 달에 뭘 줄이는 게 제일 효과적이야?',
+  '지금 사고 싶은 거 사도 될까?',
+  '내 카드 제대로 쓰고 있어?',
+  '목표까지 얼마나 걸려?'
+];
+function openAskModal(preset){
+  if(!aiEnabled()){ toast('설정에서 클라우드 로그인 또는 Gemini 키를 넣어주세요'); return openSettings(); }
+  const log=S.askLog||[];
+  openModal(`${sheetHead('AI에게 물어보기')}
+    <div id="ask-log" style="max-height:46vh;overflow-y:auto;margin-bottom:12px">
+      ${log.length?log.map(m=>askBubble(m)).join(''):`<div class="tiny" style="text-align:center;padding:14px 0">
+        내 가계부 데이터를 바탕으로 답해드려요.<br>목표·예산·카드 혜택까지 같이 보고 판단해요.</div>`}
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
+      ${ASK_SUGGEST.map(q=>`<button class="btn ghost sm" onclick="askAI('${esc(q).replace(/'/g,"\\'")}')">${esc(q)}</button>`).join('')}
+    </div>
+    <div class="row" style="gap:8px">
+      <input id="ask-input" placeholder="자유롭게 물어보세요" style="flex:1" onkeydown="if(event.key==='Enter')askAI()">
+      <button class="btn primary" id="ask-send" onclick="askAI()">묻기</button>
+    </div>
+    ${log.length?`<button class="btn ghost sm block" style="margin-top:8px" onclick="clearAsk()">대화 지우기</button>`:''}`);
+  if(preset)askAI(preset);
+}
+function askBubble(m){
+  return m.role==='user'
+    ? `<div style="text-align:right;margin-bottom:8px"><span style="display:inline-block;background:var(--terra-soft);color:var(--terra-deep);padding:8px 12px;border-radius:14px 14px 4px 14px;font-size:.87rem;max-width:85%;text-align:left">${esc(m.text)}</span></div>`
+    : `<div style="margin-bottom:12px"><span style="display:inline-block;background:var(--surface);border:1px solid var(--line);padding:10px 13px;border-radius:14px 14px 14px 4px;font-size:.87rem;white-space:pre-wrap;max-width:92%">${esc(m.text)}</span></div>`;
+}
+function pushAsk(role,text){
+  S.askLog=(S.askLog||[]).concat([{role,text}]).slice(-12);   // 최근 6쌍만 보관
+  save();
+  const el=$('ask-log');
+  if(el){ el.innerHTML=S.askLog.map(m=>askBubble(m)).join(''); el.scrollTop=el.scrollHeight; }
+}
+async function askAI(preset){
+  if(askBusy)return;
+  const q=(preset||val('ask-input')||'').trim();
+  if(!q)return toast('질문을 입력해주세요');
+  const inp=$('ask-input'); if(inp)inp.value='';
+  pushAsk('user',q);
+  askBusy=true;
+  const btn=$('ask-send'); if(btn){btn.disabled=true;btn.textContent='생각 중…'}
+  pushAsk('ai','…');
+  try{
+    // 최근 대화를 함께 넘겨 맥락 유지
+    const hist=(S.askLog||[]).slice(0,-2).slice(-6)
+      .map(m=>`${m.role==='user'?'나':'코치'}: ${m.text}`).join('\n');
+    const prompt=`${AI_PERSONA}
+아래 내 재무 데이터를 근거로 질문에 답해. 3~5문장, 순수 문장만(마크다운·JSON 금지).
+숫자를 인용하고, 마지막엔 바로 할 수 있는 행동 1가지를 제안해.
+${hist?`\n[이전 대화]\n${hist}\n`:''}
+[질문] ${q}${aiCtx()}`;
+    const out=(await gemini(prompt)).trim();
+    S.askLog.pop();                                   // '…' 제거
+    pushAsk('ai',out||'답을 만들지 못했어요. 다시 물어봐주세요.');
+    clearAIFail();
+  }catch(e){
+    S.askLog.pop();
+    pushAsk('ai','답하지 못했어요 — '+(e.message||'')+'\n(설정에서 AI 연결을 확인해주세요)');
+    noteAIFail(e);
+  }
+  askBusy=false;
+  const b2=$('ask-send'); if(b2){b2.disabled=false;b2.textContent='묻기'}
+}
+function clearAsk(){ S.askLog=[]; save(); openAskModal(); }
 
 /* ═════════ 테마(다크 모드) ═════════ */
 const THEME_KEY='claudeflow_theme';
