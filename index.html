@@ -691,8 +691,14 @@ function checkAmt(v,label){
 
 /* ═════════ 상수 ═════════ */
 // 기본 카테고리 (사용자가 추가/수정한 건 S.cats 에 저장 — 아래 EXP_CATS/INC_CATS 는 둘을 합친 결과)
-const DEF_EXP_CATS=[['🍚','식비'],['☕','카페/간식'],['🚇','교통'],['🛍️','쇼핑'],['🎬','문화/여가'],['📚','교육'],['📱','통신'],['🔄','구독'],['💊','의료'],['✈️','여행'],['🎁','경조사'],['🏠','주거'],['🏋️','운동'],['💸','기타']];
-const DEF_INC_CATS=[['📖','과외'],['🧑‍💼','아르바이트'],['💌','용돈'],['🎓','장학금'],['📈','투자수익'],['🏦','이자'],['📦','판매수익'],['💰','환급'],['🎉','상금'],['💵','기타수입']];
+const DEF_EXP_CATS=[['🍚','식비'],['☕','카페/간식'],['🍻','술/유흥'],['🚇','교통'],['🚗','자동차'],
+  ['🛍️','쇼핑'],['💄','미용'],['💇','헤어/네일'],['🎬','문화/여가'],['🎮','게임/취미'],
+  ['📚','교육'],['📱','통신'],['🔄','구독'],['💊','의료'],['🏋️','운동'],
+  ['✈️','여행'],['🎁','경조사'],['🐶','반려동물'],['🏠','주거'],['🧾','세금/공과금'],
+  ['🤝','회비'],['💝','기부'],['💳','수수료'],['💸','기타']];
+const DEF_INC_CATS=[['📖','과외'],['🧑‍💼','아르바이트'],['💼','급여'],['💌','용돈'],['🎓','장학금'],
+  ['📈','투자수익'],['🏦','이자'],['📦','판매수익'],['💰','환급'],['🎉','상금'],
+  ['🎊','보너스'],['💵','기타수입']];
 // S.cats = { exp:[[emo,name],…], inc:[[emo,name],…] } — 없으면 기본값 사용
 function catList(kind){
   const c=S.cats&&S.cats[kind];
@@ -905,32 +911,43 @@ function fmtCurK(amt,cur){
   return fmtK(amt)+'원';
 }
 /* 환율 소스: CDN(ACAO:*) 우선 → 일반 API 순. file:// 에서는 CDN만 통과 */
+/* 환율 소스 — 갱신이 빠른 실시간형을 앞에 두고, 캐시된 CDN은 마지막 폴백.
+   각 소스에서 '그 환율의 실제 기준일'도 함께 읽어 화면에 정직하게 표시한다.
+   URL 뒤 _=타임스탬프는 CDN·브라우저 캐시로 옛 값이 오는 걸 막기 위함. */
 const FX_SOURCES=[
-  {u:'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json',pick:j=>j&&j.usd&&j.usd.krw,n:'CDN'},
-  {u:'https://latest.currency-api.pages.dev/v1/currencies/usd.json',pick:j=>j&&j.usd&&j.usd.krw,n:'CDN 미러'},
-  {u:'https://open.er-api.com/v6/latest/USD',pick:j=>j&&j.rates&&j.rates.KRW,n:'er-api'},
-  {u:'https://api.frankfurter.app/latest?from=USD&to=KRW',pick:j=>j&&j.rates&&j.rates.KRW,n:'frankfurter'}
+  {u:()=>`https://open.er-api.com/v6/latest/USD?_=${Date.now()}`,
+   pick:j=>j&&j.rates&&j.rates.KRW,
+   date:j=>{try{return new Date(j.time_last_update_utc||j.time_last_update_unix*1000).toISOString().slice(0,10)}catch(e){return ''}},
+   n:'er-api'},
+  {u:()=>`https://api.frankfurter.app/latest?from=USD&to=KRW&_=${Date.now()}`,
+   pick:j=>j&&j.rates&&j.rates.KRW, date:j=>j&&j.date||'', n:'frankfurter(ECB)'},
+  {u:()=>`https://latest.currency-api.pages.dev/v1/currencies/usd.json?_=${Date.now()}`,
+   pick:j=>j&&j.usd&&j.usd.krw, date:j=>j&&j.date||'', n:'currency-api'},
+  {u:()=>`https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json?_=${Date.now()}`,
+   pick:j=>j&&j.usd&&j.usd.krw, date:j=>j&&j.date||'', n:'CDN'}
 ];
 let fxBusy=false;
 async function fetchFx(silent){
   if(fxBusy){ if(!silent)toast('환율을 가져오는 중이에요…'); return false }
   fxBusy=true;
   if(!silent)toast('환율 확인 중…');
-  S.settings.fx.tried=todayStr();
+  S.settings.fx.tried=todayStr(); S.settings.fx.triedAt=Date.now();
   let lastErr='연결 실패';
   for(const s of FX_SOURCES){
     try{
+      const url=typeof s.u==='function'?s.u():s.u;
       let r;
       if(typeof AbortController!=='undefined'){
         const c=new AbortController(), t=setTimeout(()=>c.abort(),5000);
-        r=await fetch(s.u,{signal:c.signal,cache:'no-store'}); clearTimeout(t);
-      }else r=await fetch(s.u,{cache:'no-store'});
+        r=await fetch(url,{signal:c.signal,cache:'no-store'}); clearTimeout(t);
+      }else r=await fetch(url,{cache:'no-store'});
       if(!r.ok){lastErr='서버 응답 '+r.status;continue}
       const j=await r.json();
       const v=s.pick(j);
       if(v&&v>500&&v<3000){
         S.settings.fx.usdkrw=Math.round(v*100)/100;
         S.settings.fx.at=todayStr(); S.settings.fx.err=''; S.settings.fx.src=s.n;
+        S.settings.fx.rateDate=(s.date&&s.date(j))||'';   // 환율의 실제 기준일
         save(); fxBusy=false;
         if(!silent)toast('환율 갱신: 1$ = '+S.settings.fx.usdkrw+'원');
         renderAll(); return true;
@@ -965,12 +982,15 @@ function saveFxManual(){
     commit('환율을 저장했어요');}
   else toast('올바른 환율을 입력해주세요');
 }
-function autoFx(){ // 하루 1회 자동 갱신 (실패해도 그날은 재시도 안 함)
+function autoFx(){ // 오늘 갱신 전이면 시도. 실패해도 3시간 뒤 재시도(하루 종일 멈추지 않게)
   if(!S.settings.fx.auto)return;
-  if(S.settings.fx.at===todayStr())return;
-  if(S.settings.fx.tried===todayStr())return;
-  setTimeout(()=>fetchFx(true),600); // 첫 렌더 이후 시도
+  if(S.settings.fx.at===todayStr())return;              // 오늘 이미 성공
+  const last=+S.settings.fx.triedAt||0;
+  if(Date.now()-last < 3*3600*1000)return;              // 최근 3시간 내 시도했으면 대기
+  setTimeout(()=>fetchFx(true),600);
 }
+// 앱을 다시 열 때도 환율이 오래됐으면 갱신 시도
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible')autoFx(); });
 
 /* ═════════ 화면 전환 ═════════ */
 let curView='home';
@@ -2616,7 +2636,8 @@ function goDca(){
 
 /* ═════════ v3: 자산 시뮬레이터 ═════════ */
 // 최근 N개월 실제 월 저축(수입-지출) 중앙값 → 기본 저축 페이스
-function recentMonthlySaving(){
+// 최근 6개월 현금흐름(수입−지출) 중앙값
+function cashflowSaving(){
   const now=new Date(); const vals=[];
   for(let i=1;i<=6;i++){
     const d=new Date(now.getFullYear(),now.getMonth()-i,1);
@@ -2629,6 +2650,15 @@ function recentMonthlySaving(){
   const mid=Math.floor(vals.length/2);
   return Math.round(vals.length%2?vals[mid]:(vals[mid-1]+vals[mid])/2);
 }
+/* 시뮬레이션에 쓸 월 저축액.
+   적금·청약 납입은 '이체'라 현금흐름(수입−지출)에는 안 잡히지만 확실한 강제저축이다.
+   수입을 기록하지 않거나 적금을 새로 시작한 경우 현금흐름만 보면 과소평가되므로,
+   강제저축을 하한선으로 삼는다. */
+function savingBreakdown(){
+  const flow=cashflowSaving(), forced=monthlyAutoSaving();
+  return {flow, forced, used:Math.max(flow,forced), byForced:forced>flow};
+}
+function recentMonthlySaving(){ return savingBreakdown().used; }
 // 적금·청약 월 자동납입 합계(만기 전까지 유지되는 강제저축)
 function monthlyAutoSaving(){
   return S.accounts.filter(a=>(a.type==='saving'||a.type==='housing')&&a.monthly>0)
@@ -2670,7 +2700,12 @@ function renderSim(){
   el.innerHTML=`
     <div class="row"><div style="font-weight:800;font-size:.95rem">📈 자산 시뮬레이터</div>
       <div class="horizon-seg">${[6,12,36].map(h=>`<button class="${S.settings.simHorizon===h?'on':''}" onclick="setHorizon(${h})">${h>=12?h/12+'년':h+'개월'}</button>`).join('')}</div></div>
-    <div class="tiny" style="margin-top:6px">최근 6개월 기준 월 저축 <b class="num ${base>=0?'pos':'neg'}">${base>=0?'+':'−'}${fmtK(Math.abs(base))}원</b>${monthlyAutoSaving()>0?` (적금 자동납입 ${fmtK(monthlyAutoSaving())}원 포함)`:''} · 이대로 가면?</div>
+    <div class="tiny" style="margin-top:6px">월 저축 <b class="num ${base>=0?'pos':'neg'}">${base>=0?'+':'−'}${fmtK(Math.abs(base))}원</b> · 이대로 가면?
+      ${(()=>{const sb=savingBreakdown();
+        if(!sb.forced)return ' <span class="tiny">(최근 6개월 현금흐름 기준)</span>';
+        return sb.byForced
+          ? `<br>🔒 적금·청약 자동납입 <b class="num">${fmtK(sb.forced)}원</b> 기준 (현금흐름 ${sb.flow>=0?'+':'−'}${fmtK(Math.abs(sb.flow))}원보다 커서 이 값을 써요)`
+          : `<br>현금흐름 기준 · 이 중 적금·청약 자동납입 <b class="num">${fmtK(sb.forced)}원</b> 포함`;})()}</div>
     <svg class="svg-chart" id="sim-svg" viewBox="0 0 440 180" style="margin-top:10px"></svg>
     <div class="sim-out" id="sim-out"></div>
     <div class="sim-controls">
@@ -3221,7 +3256,11 @@ function renderFxChip(){
   if(f.err){
     el.innerHTML=`<span class="fx-chip" onclick="openFxModal()" style="cursor:pointer;background:var(--terra-soft);color:var(--terra-deep)">💵 1$ = ${f.usdkrw.toLocaleString()}원 · ⚠️ 자동갱신 실패 — 탭해서 설정</span>`;
   }else{
-    el.innerHTML=`<span class="fx-chip" onclick="fetchFx()" style="cursor:pointer">💵 1$ = ${f.usdkrw.toLocaleString()}원 · ${f.at?(stale?f.at:'오늘 갱신됨'):'미갱신'} ⟳</span>`;
+    // '언제 받아왔나'가 아니라 '그 환율이 언제 기준인가'를 보여줘야 정직하다
+    const rd=f.rateDate||'', old=rd&&rd!==todayStr();
+    const label=rd?(old?`${rd.slice(5).replace('-','/')} 기준`:'오늘 기준')
+                  :(f.at?(stale?f.at:'오늘 갱신됨'):'미갱신');
+    el.innerHTML=`<span class="fx-chip" onclick="fetchFx()" style="cursor:pointer${old?';background:var(--gold-soft);color:var(--gold)':''}">💵 1$ = ${f.usdkrw.toLocaleString()}원 · ${label}${f.src?` · ${esc(f.src)}`:''} ⟳</span>`;
   }
 }
 function openFxModal(){
