@@ -13,17 +13,16 @@
  * 값을 비워두면 앱은 예전처럼 '설정에서 사용자가 직접 입력' 방식으로 동작한다.
  * ═══════════════════════════════════════════════════════════════════════ */
 window.CLAUDE_FLOW_CONFIG = {
-  // 예: 'https://abcdefghijklm.supabase.co'
-  supabaseUrl: '',
 
-  // Project Settings → API Keys → anon / public (eyJ… 로 시작하는 긴 문자열)
+  supabaseUrl: 'https://edeqhtgmddambnzsofai.supabase.co',
+
+  // ▼▼▼ 여기에 anon key 를 붙여넣으세요 ▼▼▼
+  //   찾는 곳: Supabase → Project Settings → API Keys → anon / public
+  //   'eyJ' 로 시작하는 200자 안팎의 긴 문자열입니다. (점 두 개가 들어간 형태)
+  //   ❌ service_role / secret 키가 아닙니다.
   supabaseAnonKey: '',
+  // ▲▲▲ 따옴표 안에만 붙여넣기 ▲▲▲
 
   // 사용자가 설정에서 '다른 Supabase 프로젝트'를 직접 쓸 수 있게 할지 여부
-  allowCustomProject: true
-};
-window.CLAUDE_FLOW_CONFIG = {
-  supabaseUrl: 'https://edeqhtgmddambnzsofai.supabase.co',   // ← 형 프로젝트 URL
-  supabaseAnonKey: 'eyJ...',                                  // ← anon/public 키 붙여넣기
   allowCustomProject: true
 };

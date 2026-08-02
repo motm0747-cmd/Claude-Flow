@@ -50,9 +50,15 @@
     // 이 기기에 저장된 설정이 없으면 앱에 내장된 기본 프로젝트(config.js)를 쓴다
     builtinCfg: function () {
       var c = window.CLAUDE_FLOW_CONFIG;
-      if (c && c.supabaseUrl && c.supabaseAnonKey)
-        return { url: String(c.supabaseUrl).trim().replace(/\/+$/, ''), anonKey: String(c.supabaseAnonKey).trim(), builtin: true };
-      return null;
+      if (!c) return null;
+      var url = String(c.supabaseUrl || '').trim().replace(/\/+$/, '');
+      var key = String(c.supabaseAnonKey || '').trim();
+      // 예시/자리표시자가 그대로 남아 있으면 '설정 안 된 것'으로 본다.
+      // (그대로 두면 연결된 척하다가 로그인 단계에서 알 수 없는 오류가 남)
+      var placeholder = !/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url)
+        || key.length < 60 || key.split('.').length !== 3;
+      if (placeholder) return null;
+      return { url: url, anonKey: key, builtin: true };
     },
     hasBuiltin: function () { return !!this.builtinCfg(); },
     // 지금 쓰는 설정이 내장 기본값인지(사용자가 직접 넣은 게 아닌지)
