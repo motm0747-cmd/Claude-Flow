@@ -22,3 +22,8 @@ window.CLAUDE_FLOW_CONFIG = {
   // 사용자가 설정에서 '다른 Supabase 프로젝트'를 직접 쓸 수 있게 할지 여부
   allowCustomProject: true
 };
+window.CLAUDE_FLOW_CONFIG = {
+  supabaseUrl: 'https://edeqhtgmddambnzsofai.supabase.co',   // ← 형 프로젝트 URL
+  supabaseAnonKey: 'eyJ...',                                  // ← anon/public 키 붙여넣기
+  allowCustomProject: true
+};
