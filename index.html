@@ -422,7 +422,9 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 </style>
 <!-- 클라우드 동기화(Supabase) -->
 <script src="config.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- 동기화 라이브러리: 앱에 번들(오프라인·CDN 차단 대비). 실패 시에만 CDN 폴백 -->
+<script defer src="vendor/supabase.js"></script>
+<script defer>if(!window.supabase){var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';document.head.appendChild(s);}</script>
 <script defer src="sync.js"></script>
 </head>
 <body>
@@ -4358,7 +4360,13 @@ function renderSyncBanner(){
     else if(Sync.status==='signedout'){
       el.innerHTML=`<div class="card tight row"><div style="font-size:.86rem"><b>☁️ 기기 간 동기화</b><br><span class="tiny">가입하면 폰·패드·PC가 같은 데이터를 공유해요</span></div><button class="btn primary sm" onclick="openSettings()">가입 · 로그인</button></div>`;
     } else if(Sync.status==='error'){
-      el.innerHTML=`<div class="card tight" style="background:var(--terra-soft);border-color:var(--terra-line)"><div style="font-size:.82rem;color:var(--terra-deep)">☁️ 동기화 오류 — ${esc(Sync.lastError||'')}</div><div class="tiny" style="margin-top:3px;color:#6E4a3a">로컬 저장은 정상이에요. 설정에서 다시 시도할 수 있어요.</div></div>`;
+      // 한 번도 로그인한 적 없는 사용자에게 빨간 오류를 띄우면 겁만 준다.
+      // 실제로 동기화를 쓰던 사람에게만 경고하고, 신규 사용자에겐 평소 안내를 보여준다.
+      if(S.settings&&S.settings.syncUsed){
+        el.innerHTML=`<div class="card tight" style="background:var(--terra-soft);border-color:var(--terra-line)"><div style="font-size:.82rem;color:var(--terra-deep)">☁️ 동기화 오류 — ${esc(Sync.lastError||'')}</div><div class="tiny" style="margin-top:3px;color:#6E4a3a">로컬 저장은 정상이에요. 설정에서 다시 시도할 수 있어요.</div></div>`;
+      }else{
+        el.innerHTML=`<div class="card tight row"><div style="font-size:.86rem"><b>☁️ 기기 간 동기화</b><br><span class="tiny">가입하면 폰·패드·PC가 같은 데이터를 공유해요</span></div><button class="btn primary sm" onclick="openSettings()">가입 · 로그인</button></div>`;
+      }
     } else { el.innerHTML=''; }
   }
   const line=$('sync-status-line'); if(line){ line.textContent=syncStatusText(); line.style.color=syncStatusColor(); }
@@ -4499,7 +4507,11 @@ autoFx();
 if('serviceWorker' in navigator){
   window.addEventListener('load',()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{}); });
 }
-window.addEventListener('load',()=>{ if(window.Sync){ Sync.on((s)=>{ renderSyncBanner(); if(s&&s.status==='synced') refreshDigest(); }); Sync.init(); renderSyncBanner(); } });
+window.addEventListener('load',()=>{ if(window.Sync){ Sync.on((s)=>{
+  // 실제로 로그인해 본 적이 있는지 기록 (오류 배너를 신규 사용자에게 띄우지 않기 위함)
+  if(s&&s.signedIn&&s.signedIn()&&!(S.settings&&S.settings.syncUsed)){ S.settings.syncUsed=true; save(); }
+  renderSyncBanner(); if(s&&s.status==='synced') refreshDigest();
+}); Sync.init(); renderSyncBanner(); } });
 </script>
 </body>
 </html>

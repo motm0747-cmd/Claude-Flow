@@ -3,7 +3,7 @@
  * 목적: 설치형 PWA + 오프라인 동작. 앱 껍데기는 캐시, API 호출은 절대 캐시하지 않음.
  * 캐시 버전을 올리면(아래 CACHE) 이전 캐시는 자동 정리된다.
  * ═══════════════════════════════════════════════════════════════════════ */
-const CACHE = 'claude-flow-v5';
+const CACHE = 'claude-flow-v6';
 
 // 앱 껍데기(오프라인에도 떠야 하는 정적 자원)
 const SHELL = [
@@ -11,6 +11,7 @@ const SHELL = [
   './index.html',
   './manifest.webmanifest',
   './config.js',
+  './vendor/supabase.js',
   './sync.js'
 ];
 
