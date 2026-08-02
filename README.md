@@ -70,7 +70,28 @@
   *"Confirm email"* 을 꺼 두면 가입 즉시 로그인됩니다(가장 간단).
   켜 두면 가입 시 확인 메일의 링크를 눌러야 합니다.
 
-### 3-4. 앱에 연결
+### 3-4-A. (배포용) 앱에 프로젝트 내장하기 — 사용자는 입력 불필요 ⭐
+여러 사람에게 배포하거나 앱처럼 쓰려면, [`config.js`](config.js)에 프로젝트 정보를 한 번만 넣어두세요. 그러면 **사용자는 URL·키를 입력할 필요 없이 이메일·비밀번호만으로 가입**할 수 있습니다.
+
+```js
+window.CLAUDE_FLOW_CONFIG = {
+  supabaseUrl: 'https://xxxx.supabase.co',
+  supabaseAnonKey: 'eyJ...',      // anon / public 키
+  allowCustomProject: true         // 사용자가 자기 Supabase를 쓰도록 허용할지
+};
+```
+
+> **anon key를 코드에 넣어도 되나요?** 네. anon key는 Supabase가 브라우저 공개를 전제로 설계한 키이고, 실제 보호는 RLS 정책이 담당합니다(`supabase/schema.sql` 적용 필수 — 로그인 사용자는 자기 행만 접근).
+> ❌ `service_role` / `secret` 키는 절대 넣지 마세요. RLS를 우회합니다.
+
+배포 시 함께 확인할 것:
+- **Authentication → Providers → Email**의 *Confirm email* — 켜두면 가입자가 확인 메일을 눌러야 합니다(공개 배포 시 권장).
+- 서버 AI(`ai` 함수)를 켜두면 **가입한 모든 사용자가 소유자의 Gemini 키를 사용**합니다. 원치 않으면 함수를 배포하지 않거나, 사용자별 키 입력 방식으로 두세요.
+- Supabase 무료 플랜의 용량·대역폭 한도를 넘지 않는지 주기적으로 확인하세요.
+
+`config.js`를 비워두면 아래 3-4-B 방식(사용자가 직접 입력)으로 동작합니다.
+
+### 3-4-B. 앱에 연결 (개인용 · 직접 입력)
 1. Supabase **Project Settings → API** 에서 두 값을 복사:
    - **Project URL** (`https://xxxx.supabase.co`)
    - **anon public** key (`eyJ…` 로 시작 — 공개되어도 안전한 키입니다)

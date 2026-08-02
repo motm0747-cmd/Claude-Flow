@@ -47,7 +47,26 @@
     listeners: [],
 
     /* ── 설정 저장소(연결 정보는 동기화 대상 밖의 별도 키) ── */
-    loadCfg: function () { try { return JSON.parse(localStorage.getItem(CFG_KEY) || 'null'); } catch (e) { return null; } },
+    // 이 기기에 저장된 설정이 없으면 앱에 내장된 기본 프로젝트(config.js)를 쓴다
+    builtinCfg: function () {
+      var c = window.CLAUDE_FLOW_CONFIG;
+      if (c && c.supabaseUrl && c.supabaseAnonKey)
+        return { url: String(c.supabaseUrl).trim().replace(/\/+$/, ''), anonKey: String(c.supabaseAnonKey).trim(), builtin: true };
+      return null;
+    },
+    hasBuiltin: function () { return !!this.builtinCfg(); },
+    // 지금 쓰는 설정이 내장 기본값인지(사용자가 직접 넣은 게 아닌지)
+    usingBuiltin: function () { return !!(this.cfg && this.cfg.builtin); },
+    allowCustom: function () {
+      var c = window.CLAUDE_FLOW_CONFIG;
+      return !this.hasBuiltin() || !c || c.allowCustomProject !== false;
+    },
+    loadCfg: function () {
+      var saved = null;
+      try { saved = JSON.parse(localStorage.getItem(CFG_KEY) || 'null'); } catch (e) { saved = null; }
+      if (saved && saved.url && saved.anonKey) return saved;
+      return this.builtinCfg();
+    },
     saveCfg: function (c) { this.cfg = c; try { localStorage.setItem(CFG_KEY, JSON.stringify(c)); } catch (e) {} },
     clearCfg: function () { this.cfg = null; try { localStorage.removeItem(CFG_KEY); } catch (e) {} },
 
@@ -169,7 +188,14 @@
       // 로그아웃 + 이 기기의 연결 설정 제거(로컬 데이터는 그대로 둔다)
       var self = this;
       this._unsubscribeRealtime();
-      var done = function () { self.clearCfg(); self.client = null; self.session = null; self.knownRev = 0; try { localStorage.removeItem(REV_KEY); } catch (e) {} self.setStatus('off'); };
+      var done = function () {
+        self.clearCfg();                 // 이 기기에 저장된 '직접 입력' 설정만 제거
+        self.client = null; self.session = null; self.knownRev = 0;
+        try { localStorage.removeItem(REV_KEY); } catch (e) {}
+        // 앱에 기본 프로젝트가 내장돼 있으면 그쪽으로 되돌아가 '로그인 필요' 상태가 된다
+        self.cfg = self.builtinCfg();
+        self.setStatus(self.cfg ? 'signedout' : 'off');
+      };
       if (this.client) return this.client.auth.signOut().then(done).catch(done);
       done(); return Promise.resolve();
     },

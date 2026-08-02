@@ -421,6 +421,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 .fx-chip{display:inline-flex;align-items:center;gap:5px;background:var(--blue-soft);color:var(--blue);border-radius:99px;padding:4px 10px;font-size:.72rem;font-weight:700}
 </style>
 <!-- 클라우드 동기화(Supabase) -->
+<script src="config.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script defer src="sync.js"></script>
 </head>
@@ -4355,7 +4356,7 @@ function renderSyncBanner(){
   if(el){
     if(!window.Sync||!Sync.configured()){ el.innerHTML=''; }
     else if(Sync.status==='signedout'){
-      el.innerHTML=`<div class="card tight row"><div style="font-size:.86rem"><b>☁️ 기기 간 동기화</b><br><span class="tiny">로그인하면 폰·패드·PC가 같은 데이터를 공유해요</span></div><button class="btn primary sm" onclick="openSettings()">로그인</button></div>`;
+      el.innerHTML=`<div class="card tight row"><div style="font-size:.86rem"><b>☁️ 기기 간 동기화</b><br><span class="tiny">가입하면 폰·패드·PC가 같은 데이터를 공유해요</span></div><button class="btn primary sm" onclick="openSettings()">가입 · 로그인</button></div>`;
     } else if(Sync.status==='error'){
       el.innerHTML=`<div class="card tight" style="background:var(--terra-soft);border-color:var(--terra-line)"><div style="font-size:.82rem;color:var(--terra-deep)">☁️ 동기화 오류 — ${esc(Sync.lastError||'')}</div><div class="tiny" style="margin-top:3px;color:#6E4a3a">로컬 저장은 정상이에요. 설정에서 다시 시도할 수 있어요.</div></div>`;
     } else { el.innerHTML=''; }
@@ -4409,10 +4410,20 @@ function renderSyncSection(){
       <div class="field"><label>anon key (public)</label><input id="sy-key" type="password" placeholder="eyJ… 로 시작"></div>
       <button class="btn dark block" onclick="syncConnect()">연결</button>`;
   } else if(!signedIn){
-    inner=`<div class="field"><label>이메일</label><input id="sy-email" type="email" placeholder="you@example.com" autocomplete="username"></div>
+    // 앱에 프로젝트가 내장돼 있으면 사용자는 이메일·비밀번호만 입력하면 된다
+    inner=`<div class="tiny" style="margin-bottom:9px">이메일로 가입하면 폰·패드·PC가 같은 데이터를 공유해요.</div>
+      <div class="field"><label>이메일</label><input id="sy-email" type="email" placeholder="you@example.com" autocomplete="username"></div>
       <div class="field"><label>비밀번호</label><input id="sy-pw" type="password" placeholder="6자 이상" autocomplete="current-password"></div>
       <div class="grid2"><button class="btn primary" onclick="syncSignIn()">로그인</button><button class="btn ghost" onclick="syncSignUp()">회원가입</button></div>
-      <button class="btn ghost block" style="margin-top:8px;font-size:.8rem;color:var(--sub)" onclick="syncDisconnect()">이 기기 연결 해제</button>`;
+      ${Sync.usingBuiltin&&Sync.usingBuiltin()
+        ? (Sync.allowCustom&&Sync.allowCustom()
+            ? `<details class="acc" style="margin-top:10px"><summary style="padding:11px 14px;font-size:.82rem">직접 만든 Supabase 쓰기 (선택)</summary>
+                 <div style="padding:0 14px 14px">
+                   <div class="field"><label>Supabase URL</label><input id="sy-url" placeholder="https://xxxx.supabase.co"></div>
+                   <div class="field"><label>anon key (public)</label><input id="sy-key" type="password" placeholder="eyJ… 로 시작"></div>
+                   <button class="btn dark block" onclick="syncConnect()">이 프로젝트로 바꾸기</button>
+                 </div></details>` : '')
+        : `<button class="btn ghost block" style="margin-top:8px;font-size:.8rem;color:var(--sub)" onclick="syncDisconnect()">이 기기 연결 해제</button>`}`;
   } else {
     inner=`<div class="row" style="margin-bottom:10px"><span class="muted" style="font-size:.85rem">${esc(Sync.email())}</span><button class="btn soft sm" onclick="syncNow()">지금 동기화</button></div>
       <button class="btn ghost block" style="margin-bottom:8px" onclick="syncForcePush()">⬆️ 이 기기 내용을 모든 기기에 덮어쓰기</button>
