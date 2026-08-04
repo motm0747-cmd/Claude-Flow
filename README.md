@@ -121,7 +121,16 @@ AI 해설(리포트·주간 브리핑)을 **서버에서** 처리하면 → 키�
 
 > CLI를 쓰면: `supabase functions deploy ai` + `supabase secrets set GEMINI_API_KEY=…`
 
-### 3-7. 토스증권 연동 (선택 · 미국주식 조회 전용)
+### 3-7. 토스증권 연동 (⏸️ 현재 비활성 · 미국주식 조회 전용)
+
+> **⚠️ 지금은 꺼져 있습니다 (`config.js` 의 `brokerEnabled: false`).**
+> 토스 Open API는 **등록된 IP에서만** 호출을 허용하는데, Supabase Edge Function은 실행 IP가 고정되지 않아 허용 목록에 등록할 수 없습니다(`IP address not allowed`).
+> 서버 함수와 앱 코드는 그대로 두었으므로, 아래 중 하나가 해결되면 `brokerEnabled: true` 로 바꾸는 것만으로 즉시 동작합니다.
+> - 토스에서 IP 제한을 해제할 수 있게 되는 경우
+> - 고정 IP를 가진 중계 서버(예: 무료 VM)를 두고 그 IP를 등록하는 경우
+>
+> 그전까지 투자 계좌 평가금액은 직접 입력해 사용합니다.
+
 투자 계좌의 **미국주식 평가금액과 보유 종목**을 토스증권 Open API에서 직접 가져옵니다. 손으로 평가금액을 갱신할 필요가 없어집니다.
 
 1. [토스증권 Open API](https://openapi.tossinvest.com) 신청 → **client id / client secret** 발급

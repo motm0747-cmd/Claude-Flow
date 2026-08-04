@@ -24,5 +24,11 @@ window.CLAUDE_FLOW_CONFIG = {
   // ▲▲▲ 따옴표 안에만 붙여넣기 ▲▲▲
 
   // 사용자가 설정에서 '다른 Supabase 프로젝트'를 직접 쓸 수 있게 할지 여부
-  allowCustomProject: true
+  allowCustomProject: true,
+
+  // 증권사(토스) 연동 노출 여부.
+  // 토스 API는 등록된 IP에서만 호출을 허용하는데 Supabase Edge Function은 실행 IP가
+  // 고정되지 않아 현재 사용할 수 없다. 고정 IP 경유 서버를 두거나 토스에서 IP 제한을
+  // 풀 수 있게 되면 true 로 바꾸면 즉시 다시 동작한다. (서버 함수·앱 코드는 그대로 유지)
+  brokerEnabled: false
 };

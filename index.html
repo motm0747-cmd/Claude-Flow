@@ -1702,7 +1702,12 @@ function delAcc(id){
 // 배포판에서는 소유자 계정만 쓸 수 있다. 허용 여부는 서버가 판단하고
 // (BROKER_ALLOWED_EMAILS), 앱은 그 결과로 버튼 노출만 결정한다.
 let brokerAllowed=null;                    // null=미확인, true/false=확인됨
-function brokerReady(){ return !!(window.Sync && Sync.brokerReady && Sync.brokerReady()); }
+// config.js 의 brokerEnabled 가 false 면 연동 기능을 아예 노출하지 않는다
+function brokerEnabled(){
+  const c=window.CLAUDE_FLOW_CONFIG;
+  return !!(c && c.brokerEnabled);
+}
+function brokerReady(){ return brokerEnabled() && !!(window.Sync && Sync.brokerReady && Sync.brokerReady()); }
 let brokerWhy='';                          // 버튼이 숨겨진 이유(진단용)
 function brokerCheckAllowed(){
   if(!brokerReady()){ brokerAllowed=false; brokerWhy='클라우드에 로그인되어 있지 않아요'; return Promise.resolve(false); }
@@ -1771,6 +1776,7 @@ function brokerDiagnose(){
   });
 }
 function renderBrokerDiag(){
+  if(!brokerEnabled())return '';                     // 꺼져 있으면 점검 패널도 숨김
   if(!(window.Sync&&Sync.signedIn&&Sync.signedIn()))return '';
   return `<div class="card tight" style="margin-bottom:14px">
     <div class="row" style="margin-bottom:6px"><b style="font-size:.9rem">🔌 증권사 연동 점검</b>
