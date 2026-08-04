@@ -1598,13 +1598,14 @@ function openAccModal(id,presetType){
     </div>
     <div class="card tight" id="ac-rate-box" style="margin-bottom:12px;display:none"><div class="tiny" id="ac-rate-hint"></div></div>`:''}
     ${isInv&&a?`<button class="btn soft block" style="margin-bottom:8px" onclick="openInvLogModal('${a.id}')">＋ 투자금 납입 기록</button>
-      <button class="btn ghost block" style="margin-bottom:10px" onclick="openBrokerModal('${a.id}')">📥 토스증권에서 불러오기 (미국주식)</button>`:''}
+      <div id="broker-btn-slot"></div>`:''}
     <div style="display:flex;gap:8px;margin-top:6px">
       ${a?`<button class="btn ghost" style="flex:1" onclick="delAcc('${a.id}')">삭제</button>`:''}
       <button class="btn primary" style="flex:2" onclick="saveAcc('${a?a.id:''}','${type}')">저장</button>
     </div>`);
   if(isHou)houEstimate();
   rateHint();
+  if(isInv&&a)brokerMaybeShowButton(a.id);
 }
 // 이자율 입력 시 예상 이자 미리보기
 function rateHint(){
@@ -1696,8 +1697,26 @@ function delAcc(id){
 }
 
 /* ── 투자 납입 기록 & DCA 차트 ── */
-/* ═════════ 토스증권 연동 (미국주식 · 조회 전용) ═════════ */
+/* ═════════ 토스증권 연동 (미국주식 · 조회 전용 · 소유자 전용) ═════════ */
+// 배포판에서는 소유자 계정만 쓸 수 있다. 허용 여부는 서버가 판단하고
+// (BROKER_ALLOWED_EMAILS), 앱은 그 결과로 버튼 노출만 결정한다.
+let brokerAllowed=null;                    // null=미확인, true/false=확인됨
 function brokerReady(){ return !!(window.Sync && Sync.brokerReady && Sync.brokerReady()); }
+function brokerCheckAllowed(){
+  if(!brokerReady()){ brokerAllowed=false; return Promise.resolve(false); }
+  if(brokerAllowed!==null) return Promise.resolve(brokerAllowed);
+  return Sync.callBroker({action:'status'})
+    .then(d=>{ brokerAllowed=!!(d&&d.allowed); return brokerAllowed; })
+    .catch(()=>{ brokerAllowed=false; return false; });
+}
+// 계좌 모달이 열린 뒤 허용된 계정에만 버튼을 끼워 넣는다
+function brokerMaybeShowButton(accId){
+  brokerCheckAllowed().then(ok=>{
+    if(!ok)return;
+    const slot=$('broker-btn-slot'); if(!slot)return;
+    slot.innerHTML=`<button class="btn ghost block" style="margin-bottom:10px" onclick="openBrokerModal('${accId}')">📥 토스증권에서 불러오기 (미국주식)</button>`;
+  });
+}
 function openBrokerModal(accId){
   const a=accById(accId);
   if(!brokerReady()){ toast('클라우드 로그인 후 사용할 수 있어요'); return openSettings(); }

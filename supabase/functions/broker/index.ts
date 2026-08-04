@@ -21,6 +21,39 @@
 
 const TOSS_BASE = "https://openapi.tossinvest.com";
 
+// ── 소유자 전용 게이트 ──────────────────────────────────────────────
+// 이 함수는 서버에 등록된 '소유자의' 증권 계좌를 조회한다. 앱을 여러 사람에게
+// 배포하면 다른 사용자도 로그인만 하면 호출할 수 있으므로, 반드시 허용된
+// 계정인지 서버에서 확인한다. (화면에서 버튼을 숨기는 것만으로는 못 막는다)
+//
+// 시크릿: BROKER_ALLOWED_EMAILS = 쉼표로 구분한 허용 이메일 목록
+//         예) me@example.com,other@example.com
+// 설정하지 않으면 아무도 사용할 수 없다(안전 우선).
+function decodeJwtPayload(token: string): Record<string, unknown> {
+  try {
+    const p = token.split(".")[1];
+    if (!p) return {};
+    const b64 = p.replace(/-/g, "+").replace(/_/g, "/");
+    const pad = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+    return JSON.parse(atob(pad));
+  } catch { return {}; }
+}
+function checkOwner(req: Request): { ok: boolean; reason?: string; email?: string } {
+  const allowRaw = (Deno.env.get("BROKER_ALLOWED_EMAILS") || "").trim();
+  if (!allowRaw) {
+    return { ok: false, reason: "증권사 연동이 이 서버에서 활성화되지 않았어요. (관리자만 사용할 수 있어요)" };
+  }
+  const allow = allowRaw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const auth = req.headers.get("authorization") || "";
+  const payload = decodeJwtPayload(auth.replace(/^Bearer\s+/i, ""));
+  const email = String(payload.email || "").toLowerCase();
+  if (!email) return { ok: false, reason: "로그인이 필요해요" };
+  if (!allow.includes(email)) {
+    return { ok: false, reason: "이 계정은 증권사 연동을 사용할 수 없어요. (소유자 전용 기능)", email };
+  }
+  return { ok: true, email };
+}
+
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -87,6 +120,11 @@ Deno.serve(async (req: Request) => {
   try {
     const body = await req.json().catch(() => ({}));
     const action = String(body?.action || "");
+
+    // 소유자 확인 — 모든 action 보다 먼저
+    const gate = checkOwner(req);
+    if (action === "status") return json({ allowed: gate.ok });   // 앱이 버튼 표시 여부를 묻는 용도
+    if (!gate.ok) return json({ error: gate.reason }, 403);
     const envSeq = Deno.env.get("TOSS_ACCOUNT_SEQ");
     const accountSeq = body?.accountSeq !== undefined && body?.accountSeq !== null
       ? Number(body.accountSeq)
