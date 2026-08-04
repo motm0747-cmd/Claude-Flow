@@ -1766,6 +1766,19 @@ function brokerMaybeShowButton(accId){
     slot.innerHTML=`<button class="btn ghost block" style="margin-bottom:10px" onclick="openBrokerModal('${accId}')">📥 토스증권에서 불러오기 (미국주식)</button>`;
   });
 }
+// 투자 계좌가 여럿이면 어디에 연결할지 먼저 고른다
+function brokerPick(){
+  const invest=S.accounts.filter(a=>a.type==='invest');
+  if(!invest.length)return toast('투자 계좌를 먼저 추가해주세요');
+  if(invest.length===1)return openBrokerModal(invest[0].id);
+  openModal(`${sheetHead('어느 계좌에 연결할까요')}
+    <div class="tiny" style="margin-bottom:10px">토스증권 미국주식을 반영할 계좌를 골라주세요.</div>
+    ${invest.map(a=>`<div class="asset-item" onclick="openBrokerModal('${a.id}')">
+      <div class="a-ic" style="background:var(--terra-soft)">📈</div>
+      <div class="a-main"><div class="a-name">${esc(a.name)}</div>
+        <div class="a-sub">${fmtCur(a.balance,a.cur)}${a.broker==='toss'?' · <span class="pos">연결됨</span>':''}</div></div>
+    </div>`).join('')}`);
+}
 function openBrokerModal(accId){
   const a=accById(accId);
   if(!brokerReady()){ toast('클라우드 로그인 후 사용할 수 있어요'); return openSettings(); }
@@ -1823,7 +1836,22 @@ function brokerUnlink(accId){
 function renderBrokerCard(){
   const el=$('broker-card'); if(!el)return;
   const accs=S.accounts.filter(a=>a.type==='invest'&&a.broker==='toss'&&(a.brokerHoldings||[]).length);
-  if(!accs.length){ el.innerHTML=''; el.style.display='none'; return; }
+  if(!accs.length){
+    // 아직 연결 전이면, 허용된 계정에 한해 자산 화면에서 바로 연결할 수 있게 안내한다
+    // (계좌 수정 화면 안에만 두면 찾기 어렵다)
+    el.innerHTML=''; el.style.display='none';
+    const invest=S.accounts.filter(a=>a.type==='invest');
+    if(!invest.length)return;
+    brokerCheckAllowed().then(ok=>{
+      if(!ok||!$('broker-card'))return;
+      const e2=$('broker-card'); e2.style.display='';
+      e2.innerHTML=`<div class="row" style="gap:10px">
+        <div style="flex:1;font-size:.86rem"><b>🇺🇸 토스증권 불러오기</b>
+          <br><span class="tiny">미국주식 평가금액·보유 종목을 자동으로 가져와요</span></div>
+        <button class="btn primary sm" onclick="brokerPick()">연결</button></div>`;
+    });
+    return;
+  }
   el.style.display='';
   el.innerHTML=accs.map(a=>{
     const hs=a.brokerHoldings||[];
