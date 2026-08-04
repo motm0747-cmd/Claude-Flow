@@ -379,8 +379,9 @@
     aiReady: function () { return !!(this.client && this.session); },
     callAI: function (prompt) {
       if (!this.client || !this.session) return Promise.reject(new Error('로그인이 필요해요'));
+      var self = this;
       return this.client.functions.invoke('ai', { body: { prompt: prompt } }).then(function (res) {
-        if (res.error) throw new Error((res.error && res.error.message) || '서버 AI 호출 실패');
+        if (res.error) return self._fnError(res, '서버 AI 호출 실패');
         if (res.data && res.data.error) throw new Error(res.data.error);
         return (res.data && res.data.text) || '';
       });
@@ -389,10 +390,30 @@
     /* ─────────── 증권사 연동 (조회 전용, 서버 프록시 경유) ───────────
      * 키는 서버 시크릿에만 있고 앱에는 오지 않는다. 주문 기능은 서버에 없다. */
     brokerReady: function () { return !!(this.client && this.session); },
+    /* supabase-js 는 함수가 4xx/5xx 를 주면 'non-2xx status code' 라는 일반 메시지만 준다.
+       실제 사유는 응답 본문에 있으므로 꺼내서 그대로 보여준다. */
+    _fnError: function (res, fallback) {
+      var ctx = res && res.error && res.error.context;
+      var base = (res && res.error && res.error.message) || fallback || '호출 실패';
+      if (ctx && typeof ctx.json === 'function') {
+        return ctx.json().then(
+          function (b) { throw new Error((b && (b.error || b.message)) || base); },
+          function () { throw new Error(base); }
+        );
+      }
+      if (ctx && typeof ctx.text === 'function') {
+        return ctx.text().then(
+          function (t) { throw new Error(t || base); },
+          function () { throw new Error(base); }
+        );
+      }
+      return Promise.reject(new Error(base));
+    },
     callBroker: function (payload) {
       if (!this.client || !this.session) return Promise.reject(new Error('로그인이 필요해요'));
+      var self = this;
       return this.client.functions.invoke('broker', { body: payload }).then(function (res) {
-        if (res.error) throw new Error((res.error && res.error.message) || '증권사 연동 호출 실패');
+        if (res.error) return self._fnError(res, '증권사 연동 호출 실패');
         if (res.data && res.data.error) throw new Error(res.data.error);
         return res.data;
       });

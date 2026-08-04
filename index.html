@@ -1729,8 +1729,27 @@ function brokerDiagnose(){
   if(!brokerReady()){ box.innerHTML=lines.join('<br>'); return; }
   Sync.callBroker({action:'status'}).then(d=>{
     if(d&&d.allowed===true){
-      lines.push('서버 응답 ✅ <b>사용 가능</b>');
-      lines.push('<span class="pos">정상이에요. 자산 → 투자 계좌에서 버튼이 보여요.</span>');
+      lines.push('서버 응답 ✅ <b>사용 권한 있음</b>');
+      box.innerHTML=lines.join('<br>')+'<br>토스 API 연결 확인 중…';
+      // 권한만으로는 부족하다 — 실제 토스 호출까지 해봐야 키 문제를 알 수 있다
+      return Sync.callBroker({action:'accounts'}).then(r=>{
+        const n=(r&&r.accounts&&r.accounts.length)||0;
+        lines.push(`토스 API ✅ <b>계좌 ${n}개</b> 조회됨`);
+        lines.push('<span class="pos">모두 정상이에요.</span>');
+        box.innerHTML=lines.join('<br>');
+      }).catch(e=>{
+        const m=(e&&e.message)||'';
+        lines.push(`토스 API ❌ ${esc(m)}`);
+        if(/TOSS_API_KEY|설정되지 않았/.test(m))
+          lines.push('→ Secrets에 <b>TOSS_API_KEY</b>·<b>TOSS_SECRET_KEY</b>를 넣고 함수를 <b>다시 Deploy</b> 해주세요.');
+        else if(/토큰 발급 실패|401|invalid_client|unauthorized/i.test(m))
+          lines.push('→ 토스 키 값이 맞는지, 발급 승인이 완료됐는지 확인해주세요.');
+        else if(/403|forbidden/i.test(m))
+          lines.push('→ 토스 API 사용 권한(승인 상태)을 확인해주세요.');
+        else if(/429/.test(m))
+          lines.push('→ 호출 한도에 걸렸어요. 잠시 후 다시 시도해주세요.');
+        box.innerHTML=lines.join('<br>');
+      });
     }else if(d&&d.allowed===false){
       lines.push('서버 응답 ⚠️ <b>이 계정은 허용되지 않음</b>');
       lines.push(`현재 로그인 계정: <b>${esc(Sync.email()||'?')}</b>`);
