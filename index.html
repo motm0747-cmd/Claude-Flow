@@ -1693,62 +1693,100 @@ function delAcc(id){
 }
 
 /* ── 투자 납입 기록 & DCA 차트 ── */
+/* 외화 투자 계좌 납입은 실제 흐름(원화 이체 → 환전)을 그대로 따른다.
+   입력 기준은 두 가지: 'rate'(보낸 원화 + 환율 → 받은 외화) / 'fx'(보낸 원화 + 받은 외화 → 환율) */
+let ilMode='rate', ilAcc=null;
 function openInvLogModal(accId){
   const a=accById(accId);
+  ilAcc=accId;
+  const isFx=!!(a&&a.cur&&a.cur!=='KRW');
+  const sym=(a&&CURS[a.cur])?CURS[a.cur].sym:'$';
   const froms=S.accounts.filter(x=>x.type==='checking');
+  ilMode='rate';
   openModal(`${sheetHead('투자금 납입 (입금)')}
-    <div class="field"><label>출금 계좌</label>
-      <select id="il-from">${froms.length?froms.map(x=>`<option value="${x.id}">${ACC_META[x.type].emo} ${esc(x.name)} · ${fmtCur(x.balance,x.cur)}</option>`).join(''):'<option value="">입출금 계좌 없음</option>'}</select>
-      <div class="tiny" style="margin-top:5px">여기서 <b>${esc(a?a.name:'투자 계좌')}</b>로 이체 처리돼요.</div></div>
+    <div class="field"><label>출금 계좌 (원화)</label>
+      <select id="il-from">${froms.length?froms.map(x=>`<option value="${x.id}">${ACC_META[x.type].emo} ${esc(x.name)} · ${fmtCur(x.balance,x.cur)}</option>`).join(''):'<option value="">입출금 계좌 없음</option>'}</select></div>
     <div class="grid2">
       <div class="field"><label>날짜</label><input type="date" id="il-date" value="${todayStr()}"></div>
-      <div class="field"><label>통화</label><select id="il-cur" onchange="ilHint()">
-        ${Object.entries(CURS).map(([k,v])=>`<option value="${k}" ${(a&&a.cur)===k?'selected':''}>${v.sym} ${v.label}</option>`).join('')}
-      </select></div>
+      <div class="field"><label>보낸 금액 (원)</label><input type="number" inputmode="numeric" id="il-krw" placeholder="0" oninput="ilHint()"></div>
     </div>
-    <div class="field"><label>납입 금액</label>
-      <input type="number" inputmode="decimal" step="any" id="il-amt" placeholder="0" oninput="ilHint()">
-      <div class="tiny" id="il-hint" style="margin-top:5px"></div></div>
-    <div class="field" id="il-fx-w" style="display:none"><label>적용 환율 (1$ 당 원)</label>
-      <input type="number" inputmode="decimal" step="any" id="il-fx" value="${fxRate()}" oninput="ilHint()">
-      <div class="tiny" style="margin-top:5px">💡 환전 당시 환율을 기록해두면 DCA 원가가 정확해져요.</div></div>
-    <div class="tiny" style="margin-bottom:12px">💡 출금 계좌에서 투자 계좌로 <b>이체 처리</b>되고, DCA 차트의 납입액으로 쌓여요. 시세가 변했다면 계좌의 <b>현재 평가금액</b>도 갱신해주세요.</div>
+    ${isFx?`
+    <div class="field"><label>환전 기준</label><div class="seg" id="il-seg">
+      <button class="on" onclick="ilSetMode('rate')">환율로 계산</button>
+      <button onclick="ilSetMode('fx')">받은 ${esc(sym)} 직접 입력</button>
+    </div></div>
+    <div class="field" id="il-rate-w"><label>적용 환율 (1${esc(sym)} 당 원)</label>
+      <input type="number" inputmode="decimal" step="any" id="il-fx" value="${fxRate()}" oninput="ilHint()"></div>
+    <div class="field" id="il-fx-w" style="display:none"><label>실제 받은 금액 (${esc(sym)})</label>
+      <input type="number" inputmode="decimal" step="any" id="il-fxamt" placeholder="0" oninput="ilHint()">
+      <div class="tiny" style="margin-top:5px">증권사에 찍힌 금액을 그대로 넣으면 환전 수수료까지 반영된 환율이 계산돼요.</div></div>
+    <div class="card tight" style="margin-bottom:12px"><div class="tiny" id="il-hint"></div></div>`
+    :`<div class="tiny" id="il-hint" style="margin-bottom:12px"></div>`}
+    <div class="tiny" style="margin-bottom:12px">💡 출금 계좌에서 <b>${esc(a?a.name:'투자 계좌')}</b>로 이체 처리되고, DCA 차트의 납입 원금으로 쌓여요. 시세가 변했다면 계좌의 <b>현재 평가금액</b>도 갱신해주세요.</div>
     <button class="btn primary block" onclick="saveInvLog('${accId}')">이체하고 납입 기록</button>`);
   ilHint();
 }
+function ilSetMode(m){
+  ilMode=m;
+  const rw=$('il-rate-w'), fw=$('il-fx-w');
+  if(rw)rw.style.display=(m==='rate')?'':'none';
+  if(fw)fw.style.display=(m==='fx')?'':'none';
+  document.querySelectorAll('#il-seg button').forEach((b,i)=>b.classList.toggle('on',(i===0)===(m==='rate')));
+  ilHint();
+}
+// 화면에 쓰는 계산값 (저장 때도 같은 함수를 써서 표시와 저장이 어긋나지 않게)
+function ilCalc(accId){
+  const a=accById(accId||ilAcc);
+  const isFx=!!(a&&a.cur&&a.cur!=='KRW');
+  const krw=Math.round(numVal('il-krw'));
+  if(!isFx)return {isFx:false,krw,amount:krw,cur:'KRW',rate:1};
+  let rate,amount;
+  if(ilMode==='fx'){
+    amount=+val('il-fxamt')||0;
+    rate=amount>0?krw/amount:0;
+  }else{
+    rate=+val('il-fx')||0;
+    amount=rate>0?krw/rate:0;
+  }
+  return {isFx:true,krw,cur:a.cur,rate,amount:Math.round(amount*100)/100};
+}
 function ilHint(){
-  const c=$('il-cur'),a=$('il-amt'),
-        f=$('il-fx'),w=$('il-fx-w'),h=$('il-hint');
-  if(!c||!h)return;
-  const usd=c.value==='USD';
-  if(w)w.style.display=usd?'':'none';
-  if(usd){
-    const v=+a.value||0, r=+((f&&f.value)||fxRate());
-    h.innerHTML=`≈ <b class="num">${fmt(Math.round(v*r))}</b> (환율 ${r.toLocaleString()}원)`;
-  }else h.innerHTML='';
+  const h=$('il-hint'); if(!h)return;
+  const c=ilCalc(ilAcc);
+  const sym=(CURS[c.cur]||{}).sym||'₩';
+  if(!c.isFx){ h.innerHTML=c.krw>0?`${fmt(c.krw)}을 납입해요.`:''; return; }
+  if(c.krw<=0){ h.innerHTML='보낸 금액을 입력해주세요.'; return; }
+  if(!(c.rate>0)||!(c.amount>0)){ h.innerHTML=(ilMode==='fx')?'받은 금액을 입력해주세요.':'환율을 입력해주세요.'; return; }
+  h.innerHTML=(ilMode==='fx')
+    ? `💱 ${fmt(c.krw)} → <b class="num">${sym}${c.amount.toLocaleString(undefined,{minimumFractionDigits:2})}</b><br>적용 환율 <b class="num">${Math.round(c.rate).toLocaleString()}원</b> / 1${sym} <span style="color:var(--faint)">(수수료 포함)</span>`
+    : `💱 ${fmt(c.krw)} → 받는 금액 <b class="num">${sym}${c.amount.toLocaleString(undefined,{minimumFractionDigits:2})}</b>`;
 }
 function saveInvLog(accId){
-  const d=$('il-date').value;
-  const cur=$('il-cur').value;
-  const raw=+$('il-amt').value||0;
+  const d=val('il-date');
   const fromId=val('il-from');
-  if(!d||!raw||raw<=0)return toast('금액을 확인해주세요');
+  const c=ilCalc(accId);
+  if(!d)return toast('날짜를 확인해주세요');
   if(!fromId)return toast('출금 계좌를 선택해주세요');
   const from=accById(fromId);
   if(!from)return toast('출금 계좌를 찾을 수 없어요');
-  const fxAt=cur==='USD'?(+$('il-fx').value||fxRate()):1;
-  const amount=cur==='USD'?Math.round(raw*100)/100:Math.round(raw);
-  const krw=toKRW(amount,cur,fxAt);                 // 이체는 원화 기준으로 처리
-  if(accKRW(from)<krw)return toast(`${from.name} 잔액이 부족해요 (${fmtCur(from.balance,from.cur)})`);
+  if(!checkAmt(c.krw,'보낸 금액'))return;
+  if(c.isFx){
+    if(!(c.rate>0))return toast(ilMode==='fx'?'받은 금액을 확인해주세요':'환율을 확인해주세요');
+    if(!(c.amount>0))return toast('환전 금액을 확인해주세요');
+  }
+  if(accKRW(from)<c.krw)return toast(`${from.name} 잔액이 부족해요 (${fmtCur(from.balance,from.cur)})`);
   const a=accById(accId);
-  const t={id:uid(),type:'transfer',date:d,amount:krw,fromId,toId:accId,
+  const fxAt=c.isFx?c.rate:1;
+  const t={id:uid(),type:'transfer',date:d,amount:c.krw,fromId,toId:accId,
     memo:`${a?a.name:'투자'} 납입`,invLogId:null,fxAt};
-  const log={id:uid(),accountId:accId,date:d,amount,cur,fxAt,txId:t.id};
+  const log={id:uid(),accountId:accId,date:d,amount:c.amount,cur:c.cur,fxAt,txId:t.id};
   t.invLogId=log.id;
-  S.tx.push(t); applyBalance(t,1);                   // 출금계좌 −, 투자계좌 +
+  S.tx.push(t); applyBalance(t,1);                   // 출금계좌 −원화, 투자계좌 +외화(환율 적용)
   S.invLogs.push(log);                               // 원금(DCA) 기록
   save();closeModal();renderAll();
-  toast(`${from.name} → ${a?a.name:'투자'} ${fmt(krw)} 납입했어요`);
+  const sym=(CURS[c.cur]||{}).sym||'₩';
+  toast(c.isFx?`${fmt(c.krw)} → ${sym}${c.amount.toLocaleString()} 납입했어요`
+              :`${from.name} → ${a?a.name:'투자'} ${fmt(c.krw)} 납입했어요`);
 }
 /* 달러 투자: 주가 손익과 환율 손익을 분리 */
 function fxBreakdown(){
