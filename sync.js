@@ -386,6 +386,18 @@
       });
     },
 
+    /* ─────────── 증권사 연동 (조회 전용, 서버 프록시 경유) ───────────
+     * 키는 서버 시크릿에만 있고 앱에는 오지 않는다. 주문 기능은 서버에 없다. */
+    brokerReady: function () { return !!(this.client && this.session); },
+    callBroker: function (payload) {
+      if (!this.client || !this.session) return Promise.reject(new Error('로그인이 필요해요'));
+      return this.client.functions.invoke('broker', { body: payload }).then(function (res) {
+        if (res.error) throw new Error((res.error && res.error.message) || '증권사 연동 호출 실패');
+        if (res.data && res.data.error) throw new Error(res.data.error);
+        return res.data;
+      });
+    },
+
     /* ─────────── 서버 자동화: 오늘의 리마인더(daily_digest) 조회 ───────────
      * 서버 스케줄 함수가 매일 계산해 둔 요약/리마인더를 읽어온다. (없으면 null) */
     getDigest: function () {

@@ -565,6 +565,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
     <div class="card tight" id="housing-card"></div>
     <div class="sec-title">투자 <span class="link" onclick="openAccModal(null,'invest')">+ 추가</span></div>
     <div class="card tight" id="list-invest"></div>
+    <div class="card tight" id="broker-card"></div>
     <div class="card" id="dca-card"></div>
     <div class="sec-title">저축 목표 <span class="link" onclick="openGoalModal()">+ 추가</span></div>
     <div class="card tight" id="list-goals"></div>
@@ -1447,6 +1448,7 @@ function renderAssets(){
     ob.style.display=S.accounts.length>1?'':'none';}
   renderFxChip();
   renderHousing();
+  renderBrokerCard();
   renderDCA();
   renderGoals();
   renderRecon();
@@ -1595,7 +1597,8 @@ function openAccModal(id,presetType){
       <div class="field"><label class="cb-row" style="margin-top:26px"><input type="checkbox" id="ac-taxfree" ${a&&a.taxFree?'checked':''} onchange="rateHint()"><span>비과세</span></label></div>
     </div>
     <div class="card tight" id="ac-rate-box" style="margin-bottom:12px;display:none"><div class="tiny" id="ac-rate-hint"></div></div>`:''}
-    ${isInv&&a?`<button class="btn soft block" style="margin-bottom:10px" onclick="openInvLogModal('${a.id}')">＋ 투자금 납입 기록</button>`:''}
+    ${isInv&&a?`<button class="btn soft block" style="margin-bottom:8px" onclick="openInvLogModal('${a.id}')">＋ 투자금 납입 기록</button>
+      <button class="btn ghost block" style="margin-bottom:10px" onclick="openBrokerModal('${a.id}')">📥 토스증권에서 불러오기 (미국주식)</button>`:''}
     <div style="display:flex;gap:8px;margin-top:6px">
       ${a?`<button class="btn ghost" style="flex:1" onclick="delAcc('${a.id}')">삭제</button>`:''}
       <button class="btn primary" style="flex:2" onclick="saveAcc('${a?a.id:''}','${type}')">저장</button>
@@ -1693,6 +1696,86 @@ function delAcc(id){
 }
 
 /* ── 투자 납입 기록 & DCA 차트 ── */
+/* ═════════ 토스증권 연동 (미국주식 · 조회 전용) ═════════ */
+function brokerReady(){ return !!(window.Sync && Sync.brokerReady && Sync.brokerReady()); }
+function openBrokerModal(accId){
+  const a=accById(accId);
+  if(!brokerReady()){ toast('클라우드 로그인 후 사용할 수 있어요'); return openSettings(); }
+  const linked=a&&a.brokerSeq;
+  openModal(`${sheetHead('토스증권 불러오기')}
+    <div class="tiny" style="margin-bottom:12px">토스증권의 <b>미국주식 평가금액·보유 종목</b>을 가져와 <b>${esc(a?a.name:'투자 계좌')}</b>에 반영해요.
+      <br>조회만 하며 주문은 하지 않아요.</div>
+    <div class="field"><label>연결할 토스 계좌</label>
+      <select id="bk-acc"><option value="">${linked?`현재: ${esc(String(a.brokerSeq))}번 계좌`:'계좌를 불러오세요'}</option></select>
+      <button class="btn ghost sm block" style="margin-top:7px" onclick="brokerLoadAccounts()">계좌 목록 불러오기</button></div>
+    <div class="card tight" style="margin-bottom:12px"><div class="tiny" id="bk-hint">계좌를 고른 뒤 아래 버튼을 눌러주세요.</div></div>
+    <button class="btn primary block" onclick="brokerSync('${accId}')">📥 미국주식 불러오기</button>
+    ${linked?`<button class="btn ghost block" style="margin-top:8px;color:var(--danger)" onclick="brokerUnlink('${accId}')">연결 해제</button>`:''}`);
+  if(linked)brokerLoadAccounts();
+}
+function brokerLoadAccounts(){
+  const h=$('bk-hint'); if(h)h.textContent='계좌 목록을 불러오는 중…';
+  Sync.callBroker({action:'accounts'}).then(d=>{
+    const sel=$('bk-acc'); if(!sel)return;
+    const list=Array.isArray(d.accounts)?d.accounts:[];
+    if(!list.length){ if(h)h.textContent='조회된 계좌가 없어요.'; return; }
+    sel.innerHTML=list.map(x=>`<option value="${x.accountSeq}">${esc(String(x.accountNo||''))} · ${esc(String(x.accountType||''))} (seq ${x.accountSeq})</option>`).join('');
+    if(h)h.textContent=`계좌 ${list.length}개를 불러왔어요.`;
+  }).catch(e=>{ if(h)h.innerHTML=`불러오지 못했어요 — ${esc(e.message||'')}`; });
+}
+function brokerSync(accId){
+  const a=accById(accId); if(!a)return;
+  const sel=$('bk-acc');
+  const seq=(sel&&sel.value)?Number(sel.value):(a.brokerSeq!==undefined?a.brokerSeq:undefined);
+  if(seq===undefined||Number.isNaN(seq))return toast('토스 계좌를 먼저 선택해주세요');
+  const h=$('bk-hint'); if(h)h.textContent='불러오는 중…';
+  Sync.callBroker({action:'us-summary',accountSeq:seq}).then(d=>{
+    a.brokerSeq=seq; a.broker='toss';
+    a.brokerAt=todayStr();
+    a.brokerHoldings=d.holdings||[];
+    a.brokerCashUsd=d.cashUsd||0;
+    // 계좌 통화가 USD면 그대로, KRW 계좌면 환율로 환산해 평가금액 갱신
+    if(a.cur==='USD') a.balance=Math.round((d.totalUsd||0)*100)/100;
+    else a.balance=Math.round(toKRW(d.totalUsd||0,'USD'));
+    save(); renderAll();
+    if(h)h.innerHTML=`✅ 평가금액 <b>$${(d.totalUsd||0).toLocaleString()}</b> · 종목 ${(d.holdings||[]).length}개 반영했어요`;
+    toast(`토스증권에서 불러왔어요 · $${(d.totalUsd||0).toLocaleString()}`);
+  }).catch(e=>{
+    const m=e.message||'';
+    if(h)h.innerHTML=`불러오지 못했어요 — ${esc(m)}${/키|TOSS_/.test(m)?'<br><span class="tiny">서버에 토스 API 키를 등록했는지 확인해주세요.</span>':''}`;
+  });
+}
+function brokerUnlink(accId){
+  const a=accById(accId); if(!a)return;
+  if(!confirm('토스증권 연결을 해제할까요? 기록된 잔액은 그대로 남아요.'))return;
+  delete a.broker; delete a.brokerSeq; delete a.brokerAt; delete a.brokerHoldings; delete a.brokerCashUsd;
+  commit('연결을 해제했어요');
+}
+// 자산 화면에 표시할 보유 종목 카드
+function renderBrokerCard(){
+  const el=$('broker-card'); if(!el)return;
+  const accs=S.accounts.filter(a=>a.type==='invest'&&a.broker==='toss'&&(a.brokerHoldings||[]).length);
+  if(!accs.length){ el.innerHTML=''; el.style.display='none'; return; }
+  el.style.display='';
+  el.innerHTML=accs.map(a=>{
+    const hs=a.brokerHoldings||[];
+    const tot=hs.reduce((s,h)=>s+(h.value||0),0);
+    return `<div>
+      <div class="row" style="margin-bottom:8px"><b style="font-size:.92rem">🇺🇸 ${esc(a.name)} 보유 종목</b>
+        <button class="btn soft sm" onclick="openBrokerModal('${a.id}')">새로고침</button></div>
+      ${hs.map(h=>{
+        const pl=h.profit||0, rate=(h.profitRate||0)*100;
+        return `<div class="tx"><div class="t-main"><div class="t-name">${esc(h.symbol)} <span class="tiny">${esc(h.name||'')}</span></div>
+          <div class="t-sub">${h.quantity}주 · 평균 $${(h.avgPrice||0).toFixed(2)} → 현재 $${(h.lastPrice||0).toFixed(2)}</div></div>
+          <div style="text-align:right"><div class="t-amt num">$${(h.value||0).toLocaleString(undefined,{maximumFractionDigits:2})}</div>
+            <div class="tiny num ${pl>=0?'pos':'neg'}">${pl>=0?'+':''}$${Math.abs(pl).toFixed(2)} (${rate>=0?'+':''}${rate.toFixed(1)}%)</div></div></div>`;
+      }).join('')}
+      ${a.brokerCashUsd?`<div class="row" style="padding:8px 2px 0"><span class="tiny">달러 예수금</span><b class="num" style="font-size:.85rem">$${(a.brokerCashUsd||0).toLocaleString()}</b></div>`:''}
+      <div class="tiny" style="margin-top:7px;color:var(--faint)">${a.brokerAt||''} 기준 · 토스증권</div>
+    </div>`;
+  }).join('<div class="divider"></div>');
+}
+
 /* 외화 투자 계좌 납입은 실제 흐름(원화 이체 → 환전)을 그대로 따른다.
    입력 기준은 두 가지: 'rate'(보낸 원화 + 환율 → 받은 외화) / 'fx'(보낸 원화 + 받은 외화 → 환율) */
 let ilMode='rate', ilAcc=null;

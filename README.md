@@ -121,6 +121,22 @@ AI 해설(리포트·주간 브리핑)을 **서버에서** 처리하면 → 키�
 
 > CLI를 쓰면: `supabase functions deploy ai` + `supabase secrets set GEMINI_API_KEY=…`
 
+### 3-7. 토스증권 연동 (선택 · 미국주식 조회 전용)
+투자 계좌의 **미국주식 평가금액과 보유 종목**을 토스증권 Open API에서 직접 가져옵니다. 손으로 평가금액을 갱신할 필요가 없어집니다.
+
+1. [토스증권 Open API](https://openapi.tossinvest.com) 신청 → **client id / client secret** 발급
+2. Supabase **Edge Functions → 새 함수 `broker`** → [`supabase/functions/broker/index.ts`](supabase/functions/broker/index.ts) 붙여넣고 **Deploy**
+3. **Edge Functions → Secrets** 에 추가
+   - `TOSS_API_KEY` = client id
+   - `TOSS_SECRET_KEY` = client secret
+4. 앱에서 **자산 → 투자 계좌 → 📥 토스증권에서 불러오기** → 계좌 목록 불러오기 → 계좌 선택 → 불러오기
+
+> **🔒 조회 전용입니다.** 토스 API 키에는 주문 권한이 함께 딸려오지만, `broker` 함수에는 주문 생성·정정·취소를 **의도적으로 구현하지 않았습니다.**
+>
+> **⚠️ 키는 절대 공유하지 마세요.** Supabase anon key와 달리 이 키는 실제 계좌에 접근합니다. 여러 사람에게 배포하는 앱이라면 증권사 연동은 **본인 전용**으로만 두세요 — 배포판 사용자가 이 함수를 호출하면 **소유자의 계좌**가 조회됩니다.
+
+가져오는 값: 미국주식 평가액 + 달러 예수금 = 계좌 평가금액, 종목별 수량·평균단가·현재가·손익.
+
 ## 4. 데이터 안전
 
 - **로컬 우선:** 앱은 항상 기기 저장소를 먼저 씁니다. 인터넷/클라우드가 안 돼도 그대로 동작합니다.
