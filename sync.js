@@ -112,7 +112,7 @@
         this.client.auth.onAuthStateChange(function (_evt, session) {
           self.session = session;
           if (session) { self.pull(true); self._subscribeRealtime(); }
-          else { self._unsubscribeRealtime(); self.setStatus('signedout'); }
+          else { self._unsubscribeRealtime(); self.smsUnsubscribe(); self.setStatus('signedout'); }
         });
         this.client.auth.getSession().then(function (res) {
           self.session = (res && res.data) ? res.data.session : null;
@@ -183,7 +183,7 @@
 
     signOut: function () {
       var self = this;
-      this._unsubscribeRealtime();
+      this._unsubscribeRealtime(); this.smsUnsubscribe();
       if (!this.client) { this.session = null; this.setStatus('signedout'); return Promise.resolve(); }
       return this.client.auth.signOut().then(function () {
         self.session = null; self.setStatus('signedout');
@@ -193,7 +193,7 @@
     disconnect: function () {
       // 로그아웃 + 이 기기의 연결 설정 제거(로컬 데이터는 그대로 둔다)
       var self = this;
-      this._unsubscribeRealtime();
+      this._unsubscribeRealtime(); this.smsUnsubscribe();
       var done = function () {
         self.clearCfg();                 // 이 기기에 저장된 '직접 입력' 설정만 제거
         self.client = null; self.session = null; self.knownRev = 0;
@@ -508,6 +508,75 @@
           self.dirty = true;
           return self.push(true);                          // 복원본을 새 버전으로 업로드
         });
+    },
+
+    /* ─────────────────────────── 문자 자동 기록 ───────────────────────────
+     * 폰의 자동화가 보낸 카드 문자 원문을 서버(sms_inbox)에서 가져온다.
+     * 해석·기록은 앱이 하고, 서버는 전달만 한다. (schema-sms.sql 필요) */
+    smsReady: function () { return !!(this.client && this.session); },
+
+    // 사용자별 수신 토큰 조회(없으면 null)
+    smsGetToken: function () {
+      if (!this.client || !this.session) return Promise.resolve(null);
+      return this.client.from('sms_tokens').select('token')
+        .eq('user_id', this.session.user.id).maybeSingle()
+        .then(function (res) {
+          if (res.error) throw new Error('수신 토큰을 확인하지 못했어요');
+          return res.data ? res.data.token : null;
+        });
+    },
+    // 새 토큰 발급(기존 토큰은 즉시 무효)
+    smsIssueToken: function () {
+      if (!this.client || !this.session) return Promise.reject(new Error('로그인이 필요해요'));
+      var bytes = new Uint8Array(24);
+      (window.crypto || {}).getRandomValues
+        ? window.crypto.getRandomValues(bytes)
+        : bytes.forEach(function (_, i) { bytes[i] = Math.floor(Math.random() * 256); });
+      var token = btoa(String.fromCharCode.apply(null, bytes))
+        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      var uid = this.session.user.id;
+      return this.client.from('sms_tokens')
+        .upsert({ user_id: uid, token: token }, { onConflict: 'user_id' })
+        .then(function (res) {
+          if (res.error) throw new Error('토큰 발급 실패 — schema-sms.sql 을 실행했는지 확인해주세요');
+          return token;
+        });
+    },
+
+    // 받은 문자 가져오기 + 즉시 삭제(claim).
+    // delete().select() 는 '실제로 지운 행'만 돌려주므로, 여러 기기가 동시에
+    // 가져가도 한 기기만 그 문자를 갖게 된다(중복 기록 방지).
+    smsClaim: function (limit) {
+      if (!this.client || !this.session) return Promise.resolve([]);
+      var self = this, uid = this.session.user.id;
+      return this.client.from('sms_inbox')
+        .select('id,raw,sender,received_at')
+        .eq('user_id', uid).order('id', { ascending: true }).limit(limit || 50)
+        .then(function (res) {
+          if (res.error || !res.data || !res.data.length) return [];
+          var ids = res.data.map(function (r) { return r.id; });
+          return self.client.from('sms_inbox').delete().in('id', ids).select('id,raw,sender,received_at')
+            .then(function (d) { return (d.error || !d.data) ? [] : d.data; });
+        })
+        .catch(function () { return []; });
+    },
+
+    // 문자가 도착하면 앱이 바로 알아채도록 구독. cb(rowCount) 로 알린다.
+    smsSubscribe: function (cb) {
+      if (!this.client || !this.session || this._smsChannel) return;
+      var uid = this.session.user.id;
+      try {
+        this._smsChannel = this.client
+          .channel('sms_inbox_' + uid)
+          .on('postgres_changes',
+            { event: 'INSERT', schema: 'public', table: 'sms_inbox', filter: 'user_id=eq.' + uid },
+            function () { try { cb(); } catch (e) {} })
+          .subscribe();
+      } catch (e) { /* 실시간이 안 돼도 앱을 열 때 가져오면 된다 */ }
+    },
+    smsUnsubscribe: function () {
+      if (this._smsChannel && this.client) { try { this.client.removeChannel(this._smsChannel); } catch (e) {} }
+      this._smsChannel = null;
     },
 
     _msg: function (e) {
