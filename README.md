@@ -121,100 +121,57 @@ AI 해설(리포트·주간 브리핑)을 **서버에서** 처리하면 → 키�
 
 > CLI를 쓰면: `supabase functions deploy ai` + `supabase secrets set GEMINI_API_KEY=…`
 
-### 3-7. 토스증권 연동 (⏸️ 현재 비활성 · 미국주식 조회 전용)
+### 3-7. 서버 자동화 + 푸시 알림 🔔
 
-> **⚠️ 지금은 꺼져 있습니다 (`config.js` 의 `brokerEnabled: false`).**
-> 토스 Open API는 **등록된 IP에서만** 호출을 허용하는데, Supabase Edge Function은 실행 IP가 고정되지 않아 허용 목록에 등록할 수 없습니다(`IP address not allowed`).
-> 서버 함수와 앱 코드는 그대로 두었으므로, 아래 중 하나가 해결되면 `brokerEnabled: true` 로 바꾸는 것만으로 즉시 동작합니다.
-> - 토스에서 IP 제한을 해제할 수 있게 되는 경우
-> - 고정 IP를 가진 중계 서버(예: 무료 VM)를 두고 그 IP를 등록하는 경우
->
-> 그전까지 투자 계좌 평가금액은 직접 입력해 사용합니다.
+매일 아침 서버가 각 사용자의 데이터를 훑어 **다가오는 결제·예산 초과·카드 실적 미달** 같은 리마인더를 계산하고, 켜져 있으면 폰 알림으로 보냅니다.
 
-투자 계좌의 **미국주식 평가금액과 보유 종목**을 토스증권 Open API에서 직접 가져옵니다. 손으로 평가금액을 갱신할 필요가 없어집니다.
+**1) 함수 배포**
 
-1. [토스증권 Open API](https://openapi.tossinvest.com) 신청 → **client id / client secret** 발급
-2. Supabase **Edge Functions → 새 함수 `broker`** → [`supabase/functions/broker/index.ts`](supabase/functions/broker/index.ts) 붙여넣고 **Deploy**
-3. **Edge Functions → Secrets** 에 추가
-   - `TOSS_API_KEY` = client id
-   - `TOSS_SECRET_KEY` = client secret
-   - **`BROKER_ALLOWED_EMAILS`** = 사용을 허용할 계정 이메일 (쉼표로 여러 개 가능) ← **필수**
-4. 앱에서 **자산 → 투자 계좌 → 📥 토스증권에서 불러오기** → 계좌 목록 불러오기 → 계좌 선택 → 불러오기
+Supabase **Edge Functions → 새 함수 `digest`** → [`supabase/functions/digest/index.ts`](supabase/functions/digest/index.ts) 붙여넣고 **Deploy** (`verify_jwt` 는 켠 채로).
 
-**🔐 소유자 전용 (배포 시 필수)**
-이 함수는 **서버에 등록된 소유자의 계좌**를 조회합니다. 앱을 여러 사람에게 배포하면 다른 사용자도 로그인만 하면 호출할 수 있으므로 두 겹으로 막습니다.
+**2) 알림 키(VAPID) 만들기**
 
-- **서버**: `BROKER_ALLOWED_EMAILS` 에 없는 계정은 403으로 거부합니다. **이 시크릿을 설정하지 않으면 아무도 사용할 수 없습니다**(안전 우선).
-- **앱**: 허용되지 않은 계정에는 연동 버튼 자체가 보이지 않습니다.
+푸시는 "이 알림을 보낸 게 정말 이 앱이다"를 증명하는 키 한 쌍이 필요합니다. 설치할 것 없이 아래 한 줄로 만들 수 있어요 (Node 18+).
 
-화면에서 버튼을 숨기는 것만으로는 막을 수 없으므로(누구나 함수를 직접 호출할 수 있음), 반드시 `BROKER_ALLOWED_EMAILS` 를 설정하세요.
-
-> **🔒 조회 전용입니다.** 토스 API 키에는 주문 권한이 함께 딸려오지만, `broker` 함수에는 주문 생성·정정·취소를 **의도적으로 구현하지 않았습니다.**
->
-> **⚠️ 키는 절대 공유하지 마세요.** Supabase anon key와 달리 이 키는 실제 계좌에 접근합니다. 여러 사람에게 배포하는 앱이라면 증권사 연동은 **본인 전용**으로만 두세요 — 배포판 사용자가 이 함수를 호출하면 **소유자의 계좌**가 조회됩니다.
-
-가져오는 값: 미국주식 평가액 + 달러 예수금 = 계좌 평가금액, 종목별 수량·평균단가·현재가·손익.
-
-### 3-8. 문자 자동 기록 (SMS → 거래) 💬
-
-카드 결제 문자가 오면 폰이 서버로 원문을 보내고, 앱이 열릴 때 **자동으로 내역이 만들어집니다.** 매일 손으로 적을 일이 사라집니다.
-
-**동작 방식**
-
-```
-카드 결제 문자  →  폰 자동화(단축어/MacroDroid)  →  sms 함수  →  sms_inbox 테이블
-                                                                      ↓
-                                            앱이 원문을 가져와 직접 해석 → 내역 생성
+```bash
+node -e "crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']).then(async k=>{const p=Buffer.from(await crypto.subtle.exportKey('raw',k.publicKey));const j=await crypto.subtle.exportKey('jwk',k.privateKey);console.log('VAPID_PUBLIC_KEY  =',p.toString('base64url'));console.log('VAPID_PRIVATE_KEY =',j.d)})"
 ```
 
-서버는 **문자를 해석하지 않습니다.** 원문만 옮겨 주는 우체통이고, 읽고 기록하는 일은 앱이 합니다. 서버가 가계부에 직접 써 넣으면 기기에서 편집 중인 내용과 충돌할 수 있기 때문입니다(로컬 우선 + rev 비교 규칙을 그대로 유지).
+**3) 양쪽에 넣기 — 두 값이 반드시 같은 쌍이어야 합니다**
 
-**설정 순서**
+| 넣는 곳 | 값 |
+|---|---|
+| Supabase → Edge Functions → Secrets | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`(`mailto:내메일`) |
+| `index.html` 의 `PUSH_VAPID_PUBLIC` | 위 **공개키와 동일한 값** |
 
-1. Supabase **SQL Editor** 에 [`supabase/schema-sms.sql`](supabase/schema-sms.sql) 붙여넣고 **Run**
-2. **Edge Functions → 새 함수 `sms`** → [`supabase/functions/sms/index.ts`](supabase/functions/sms/index.ts) 붙여넣고 **Deploy**
-   - 시크릿 설정 필요 없음 (`SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` 는 자동 제공)
-   - **`verify_jwt` 는 켠 채로 두세요**(기본값). 폰은 `Authorization` 헤더에 anon key 를 담아 보냅니다.
-3. 앱 → **설정 → 💬 문자 자동 기록** 을 켜고 → **📱 폰 설정 방법** 을 열면
-   **수신 주소**와 **인증 값**이 실제 값으로 표시됩니다 (복사 버튼 제공)
-4. 폰에 자동화를 한 번만 등록 (아래)
+> ⚠️ **가장 흔한 실패 원인이 이 둘의 불일치입니다.** 키가 다르면 구독까지는 정상적으로 되지만 발송이 전부 거절돼, 겉보기엔 "켰는데 알림이 안 온다"가 됩니다. 앱의 **설정 → 🩺 알림 점검**이 두 값을 비교해 알려줘요.
 
-**아이폰 — 단축어 앱**
+**4) 매일 실행 예약 (Database → SQL Editor)**
 
-1. 단축어 앱 → **자동화** 탭 → 우측 상단 **＋**
-2. **메시지** → 보낸 사람에 카드사 번호(예: `15447200`) 입력
-3. **즉시 실행** 선택(실행 전 묻기 끄기) → 다음
-4. **새로운 빈 자동화** → 동작 검색에서 **URL의 콘텐츠 가져오기** 추가
-5. URL 칸에 앱이 보여준 **수신 주소** 붙여넣기
-6. **▸** 를 눌러 펼치고 → 방식 **POST**
-7. **헤더** 추가: `Authorization` = 앱이 보여준 **인증 값**
-8. **본문 요청**을 **파일**로 바꾸고, 파일 자리에 **단축어 입력**(메시지 내용) 넣기
+```sql
+create extension if not exists pg_cron;
+create extension if not exists pg_net;
 
-**안드로이드 — MacroDroid / Tasker**
+select cron.schedule(
+  'claude-flow-digest', '0 22 * * *',        -- UTC 22:00 = 한국 아침 7시
+  $$ select net.http_post(
+       url := 'https://<프로젝트>.supabase.co/functions/v1/digest',
+       headers := jsonb_build_object(
+         'Authorization', 'Bearer <service_role 키>',
+         'Content-Type',  'application/json'),
+       body := '{"action":"run"}'::jsonb) $$
+);
+```
 
-1. 트리거: **SMS 수신** (발신번호를 카드사 번호로 제한)
-2. 동작: **HTTP 요청** → POST → **수신 주소**
-3. 헤더 `Authorization` = **인증 값**
-4. 본문(Body)에 `[sms_message]` 변수
+**5) 앱에서 켜기**
 
-**자동 기록 판단 기준**
+설정 → **🔔 푸시 알림 켜기** → **✉️ 테스트 알림** 로 바로 확인. 아이폰은 **홈 화면에 추가한 앱**에서 열어야 알림을 받을 수 있어요 (iOS 16.4+, Safari 탭에서는 불가).
 
-가맹점·카테고리·결제수단이 **모두 확정될 때만** 조용히 기록하고, 하나라도 애매하면 홈 화면의 **"확인이 필요한 문자"** 목록으로 보냅니다. 확인 목록에서 한 번 정해 주면 그 가맹점은 다음부터 자동 처리됩니다(가맹점 앞 4글자를 브랜드 키로 기억).
+**안 될 때**
 
-- **결제수단**: ① 카드 뒷 4자리 일치 → ② 가맹점별 기억 → ③ 카드사 이름이 맞는 카드가 딱 하나일 때 → ④ 설정한 기본 결제수단
-  → 뒷자리 매칭을 쓰려면 **카드 → 카드 관리 → 카드 뒷 4자리**를 채워 두세요.
-- **거르는 문자**: 광고·인증번호·결제예정/청구서 안내는 거래로 만들지 않습니다.
-- **중복 방지**: 같은 문자를 두 번 받아도 한 번만 기록하고, **고정지출이 이미 기록한 결제**는 건너뜁니다.
-- **승인취소**: 짝이 되는 지출을 찾아 **원거래 삭제** 버튼을 제공합니다(자동으로 지우지 않습니다).
-- **입금 문자**: 고정수입과 겹칠 수 있어 항상 확인 목록으로 보냅니다.
+설정 → **🩺 알림 점검** 이 브라우저 권한 · 서비스워커 · 이 기기 구독 · 서버 키 · 앱↔서버 키 일치 · 등록된 기기 수를 차례로 확인해 어디서 막혔는지 알려줍니다.
 
-**자동화 없이 써보기**
-
-설정 → **📋 문자 붙여넣기** 에 문자를 복사해 넣으면 그 자리에서 해석해 줍니다. 클라우드 로그인 없이도 동작하므로, 자동화를 걸기 전에 인식 정확도를 먼저 확인해 보세요.
-
-**🔒 안전 안내**
-
-수신 주소에는 계정마다 다른 **비밀 토큰**이 들어 있습니다. 남에게 공유하지 마세요. 새어 나갔다면 **주소 새로 발급**을 누르면 이전 주소는 즉시 무효가 됩니다. 문자 원문은 앱이 처리하는 즉시 서버에서 삭제되며, 남은 것도 30일 뒤 자동 정리됩니다.
+> 💡 발송은 Node 라이브러리(`web-push`) 대신 **Web Crypto 로 직접 구현**했습니다. `web-push` 는 `node:crypto` 의 `createECDH` 등에 기대고 있어 Deno 런타임에서 실패할 수 있는데, 그 실패가 조용히 묻히면 원인을 찾을 수 없기 때문입니다. 지금은 실패하면 응답에 이유가 그대로 담깁니다.
 
 ## 4. 데이터 안전
 
@@ -231,16 +188,14 @@ AI 해설(리포트·주간 브리핑)을 **서버에서** 처리하면 → 키�
 ## 5. 파일 구조
 
 ```
-index.html              앱 본체 (UI·로직 전부)
-sync.js                 클라우드 동기화 엔진 (Supabase, 옵트인)
-smsparse.js             카드 결제 문자 파서 (앱·서버 공용)
-config.js               내장 Supabase 프로젝트 설정
-sw.js                   서비스워커 (오프라인·설치)
-manifest.webmanifest    PWA 매니페스트
-icons/                  앱 아이콘 (PNG·SVG)
-supabase/schema.sql     Supabase 데이터베이스 스키마
-supabase/schema-sms.sql 문자 수신함 스키마
-supabase/functions/     Edge Function (ai · digest · broker · sms)
+index.html            앱 본체 (UI·로직 전부)
+sync.js               클라우드 동기화 엔진 (Supabase, 옵트인)
+config.js             내장 Supabase 프로젝트 설정
+sw.js                 서비스워커 (오프라인·설치·푸시 수신)
+manifest.webmanifest  PWA 매니페스트
+icons/                앱 아이콘 (PNG·SVG)
+supabase/schema.sql   Supabase 데이터베이스 스키마
+supabase/functions/   Edge Function (ai · digest)
 ```
 
 ---

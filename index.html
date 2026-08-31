@@ -422,7 +422,6 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 </style>
 <!-- 클라우드 동기화(Supabase) -->
 <script src="config.js"></script>
-<script src="smsparse.js"></script>
 <!-- 동기화 라이브러리: 앱에 번들(오프라인·CDN 차단 대비). 실패 시에만 CDN 폴백 -->
 <script defer src="vendor/supabase.js"></script>
 <script defer>if(!window.supabase){var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';document.head.appendChild(s);}</script>
@@ -443,7 +442,6 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
     <div id="storage-banner"></div>
     <div id="sync-banner"></div>
     <div id="digest-slot"></div>
-    <div id="sms-slot"></div>
     <div id="brief-slot"></div>
     <div id="report-banner"></div>
     <div id="dca-banner"></div>
@@ -567,7 +565,6 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
     <div class="card tight" id="housing-card"></div>
     <div class="sec-title">투자 <span class="link" onclick="openAccModal(null,'invest')">+ 추가</span></div>
     <div class="card tight" id="list-invest"></div>
-    <div class="card tight" id="broker-card"></div>
     <div class="card" id="dca-card"></div>
     <div class="sec-title">저축 목표 <span class="link" onclick="openGoalModal()">+ 추가</span></div>
     <div class="card tight" id="list-goals"></div>
@@ -629,7 +626,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20260822-sms';
+const APP_BUILD='20260831-slim';
 const KEY='claudeflow_v1';
 const store={
   ok:(()=>{try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true}catch(e){return false}})(),
@@ -668,10 +665,13 @@ function migrate(){
   S.askLog=S.askLog||[];            // AI 대화 기록
   S.notify=S.notify||{budget:true,card:true,fixed:true,inactive:true}; // 알림 종류
   S.fixed.forEach(f=>{ if(!f.kind)f.kind='expense'; if(f.from===undefined)f.from=''; if(f.to===undefined)f.to=''; });
-  S.cards.forEach(c=>{ if(c.annualFee===undefined)c.annualFee=0; if(c.last4===undefined)c.last4=''; });
-  // 문자 자동 기록: on=사용, auto=확신 있는 건 바로 기록, rules=가맹점별 기억, queue=확인 대기
-  S.sms=S.sms||{on:false,auto:true,payKind:'',payId:'',rules:{},queue:[],stat:{n:0,at:''}};
-  S.sms.rules=S.sms.rules||{}; S.sms.queue=S.sms.queue||[]; S.sms.stat=S.sms.stat||{n:0,at:''};
+  S.cards.forEach(c=>{ if(c.annualFee===undefined)c.annualFee=0; });
+  // 제거된 기능(문자 자동 기록·토스증권 연동)이 남긴 데이터 청소 — 동기화 용량만 차지한다
+  if(S.sms)delete S.sms;
+  S.cards.forEach(c=>{ if(c.last4!==undefined)delete c.last4; });
+  S.accounts.forEach(a=>{ ['broker','brokerSeq','brokerAt','brokerHoldings','brokerCashUsd']
+    .forEach(k=>{ if(a[k]!==undefined)delete a[k]; }); });
+  S.tx.forEach(t=>{ if(t.smsKey!==undefined){delete t.smsKey;delete t.smsRaw;delete t.src;} });
   if(!S.settings.fx)S.settings.fx={usdkrw:1380,at:'',auto:true};
   const _fx=S.settings.fx;
   if(_fx.err===undefined)_fx.err=''; if(_fx.tried===undefined)_fx.tried=''; if(_fx.src===undefined)_fx.src='';
@@ -787,7 +787,6 @@ function monthTx(ym){
   if(!_mtCache[ym])_mtCache[ym]=S.tx.filter(t=>ymOf(t.date)===ym);
   return _mtCache[ym];
 }
-function _mtInvalidate(){_mtCache={};_mtVer=''}
 const dayTx=d=>S.tx.filter(t=>t.date===d);
 function totals(ym){
   const m=monthTx(ym);let inc=0,exp=0;
@@ -817,10 +816,6 @@ const monthDiff=(a,b)=>{const[y1,m1]=a.split('-').map(Number),[y2,m2]=b.split('-
 function duePortions(t){const n=t.months||1;return Math.max(0,Math.min(n,monthDiff(ymOf(t.date),thisYM())+1))}
 function portionAmt(t,k){const n=t.months||1;const base=Math.floor(t.amount/n);return k===n-1?t.amount-base*(n-1):base}
 function pendingOfTx(t){const due=duePortions(t),paid=t.paidPortions||0;let s=0;for(let k=paid;k<due;k++)s+=portionAmt(t,k);return s}
-// 이 카드의 청구할인(결제금액 차감형) 합계
-function billDiscount(card,ym){
-  return perkEstimates(card,ym||thisYM()).filter(e=>e.active&&e.p.bill).reduce((s,e)=>s+e.est,0);
-}
 /* ── 청구할인 회계: 거래 금액에 비례 배분해 이중계상 방지 ── */
 function settledAmt(t){const p=t.paidPortions||0;let s=0;for(let k=0;k<p;k++)s+=portionAmt(t,k);return s}
 let _mcCache={},_mcVer='';
@@ -907,7 +902,6 @@ function cardMonthSpend(cardId,ym){ // 실적: 이번 달 승인액
 function totalAssets(){return S.accounts.reduce((s,a)=>s+accKRW(a),0)}
 function totalCreditPending(){return S.cards.filter(c=>c.type==='credit').reduce((s,c)=>s+creditPending(c),0)}
 function netAssets(){return totalAssets()-totalCreditPendingNet()}
-function investedTotal(){return S.invLogs.reduce((s,l)=>s+toKRW(l.amount,l.cur,l.fxAt),0)}
 /* ── 통화 · 환율 ── */
 const CURS={KRW:{sym:'₩',label:'원화'},USD:{sym:'$',label:'미국 달러'}};
 function fxRate(){return (S.settings.fx&&S.settings.fx.usdkrw)||1380}
@@ -1078,7 +1072,6 @@ function renderHome(){
   // 저장소 경고
   $('storage-banner').innerHTML = store.ok?'':
     `<div class="banner" style="background:#F6E9E5;border-color:var(--terra-line)"><div class="b-main">⚠️ 미리보기 환경이라 데이터가 저장되지 않아요. 파일을 저장해 Safari에서 열면 자동 저장됩니다.</div></div>`;
-  renderSmsCard();
   // 지난달 리포트 배너
   const pm=prevYM(ym);
   const showBanner = monthTx(pm).length>0 && !S.reports[pm];
@@ -1455,7 +1448,6 @@ function renderAssets(){
     ob.style.display=S.accounts.length>1?'':'none';}
   renderFxChip();
   renderHousing();
-  renderBrokerCard();
   renderDCA();
   renderGoals();
   renderRecon();
@@ -1604,15 +1596,13 @@ function openAccModal(id,presetType){
       <div class="field"><label class="cb-row" style="margin-top:26px"><input type="checkbox" id="ac-taxfree" ${a&&a.taxFree?'checked':''} onchange="rateHint()"><span>비과세</span></label></div>
     </div>
     <div class="card tight" id="ac-rate-box" style="margin-bottom:12px;display:none"><div class="tiny" id="ac-rate-hint"></div></div>`:''}
-    ${isInv&&a?`<button class="btn soft block" style="margin-bottom:8px" onclick="openInvLogModal('${a.id}')">＋ 투자금 납입 기록</button>
-      <div id="broker-btn-slot"></div>`:''}
+    ${isInv&&a?`<button class="btn soft block" style="margin-bottom:8px" onclick="openInvLogModal('${a.id}')">＋ 투자금 납입 기록</button>`:''}
     <div style="display:flex;gap:8px;margin-top:6px">
       ${a?`<button class="btn ghost" style="flex:1" onclick="delAcc('${a.id}')">삭제</button>`:''}
       <button class="btn primary" style="flex:2" onclick="saveAcc('${a?a.id:''}','${type}')">저장</button>
     </div>`);
   if(isHou)houEstimate();
   rateHint();
-  if(isInv&&a)brokerMaybeShowButton(a.id);
 }
 // 이자율 입력 시 예상 이자 미리보기
 function rateHint(){
@@ -1704,205 +1694,6 @@ function delAcc(id){
 }
 
 /* ── 투자 납입 기록 & DCA 차트 ── */
-/* ═════════ 토스증권 연동 (미국주식 · 조회 전용 · 소유자 전용) ═════════ */
-// 배포판에서는 소유자 계정만 쓸 수 있다. 허용 여부는 서버가 판단하고
-// (BROKER_ALLOWED_EMAILS), 앱은 그 결과로 버튼 노출만 결정한다.
-let brokerAllowed=null;                    // null=미확인, true/false=확인됨
-// config.js 의 brokerEnabled 가 false 면 연동 기능을 아예 노출하지 않는다
-function brokerEnabled(){
-  const c=window.CLAUDE_FLOW_CONFIG;
-  return !!(c && c.brokerEnabled);
-}
-function brokerReady(){ return brokerEnabled() && !!(window.Sync && Sync.brokerReady && Sync.brokerReady()); }
-let brokerWhy='';                          // 버튼이 숨겨진 이유(진단용)
-function brokerCheckAllowed(){
-  if(!brokerReady()){ brokerAllowed=false; brokerWhy='클라우드에 로그인되어 있지 않아요'; return Promise.resolve(false); }
-  if(brokerAllowed!==null) return Promise.resolve(brokerAllowed);
-  return Sync.callBroker({action:'status'})
-    .then(d=>{
-      brokerAllowed=!!(d&&d.allowed);
-      brokerWhy=brokerAllowed?'':'서버가 이 계정을 허용하지 않았어요 (BROKER_ALLOWED_EMAILS 확인)';
-      return brokerAllowed;
-    })
-    .catch(e=>{
-      brokerAllowed=false;
-      brokerWhy='서버 호출 실패 — '+(e&&e.message||'');
-      return false;
-    });
-}
-/* 증권사 연동이 왜 안 뜨는지 확인 (설정 → 진단) */
-function brokerDiagnose(){
-  const box=$('bk-diag'); if(!box)return;
-  box.innerHTML='확인 중…';
-  const lines=[];
-  lines.push(`앱 버전 <b>${APP_BUILD}</b>`);
-  lines.push(`클라우드 로그인 ${brokerReady()?'✅':'❌ (설정에서 로그인 필요)'}`);
-  if(!brokerReady()){ box.innerHTML=lines.join('<br>'); return; }
-  Sync.callBroker({action:'status'}).then(d=>{
-    if(d&&d.allowed===true){
-      lines.push('서버 응답 ✅ <b>사용 권한 있음</b>');
-      box.innerHTML=lines.join('<br>')+'<br>토스 API 연결 확인 중…';
-      // 권한만으로는 부족하다 — 실제 토스 호출까지 해봐야 키 문제를 알 수 있다
-      return Sync.callBroker({action:'accounts'}).then(r=>{
-        const n=(r&&r.accounts&&r.accounts.length)||0;
-        lines.push(`토스 API ✅ <b>계좌 ${n}개</b> 조회됨`);
-        lines.push('<span class="pos">모두 정상이에요.</span>');
-        box.innerHTML=lines.join('<br>');
-      }).catch(e=>{
-        const m=(e&&e.message)||'';
-        lines.push(`토스 API ❌ ${esc(m)}`);
-        if(/TOSS_API_KEY|설정되지 않았/.test(m))
-          lines.push('→ Secrets에 <b>TOSS_API_KEY</b>·<b>TOSS_SECRET_KEY</b>를 넣고 함수를 <b>다시 Deploy</b> 해주세요.');
-        else if(/토큰 발급 실패|401|invalid_client|unauthorized/i.test(m))
-          lines.push('→ 토스 키 값이 맞는지, 발급 승인이 완료됐는지 확인해주세요.');
-        else if(/403|forbidden/i.test(m))
-          lines.push('→ 토스 API 사용 권한(승인 상태)을 확인해주세요.');
-        else if(/429/.test(m))
-          lines.push('→ 호출 한도에 걸렸어요. 잠시 후 다시 시도해주세요.');
-        box.innerHTML=lines.join('<br>');
-      });
-    }else if(d&&d.allowed===false){
-      lines.push('서버 응답 ⚠️ <b>이 계정은 허용되지 않음</b>');
-      lines.push(`현재 로그인 계정: <b>${esc(Sync.email()||'?')}</b>`);
-      lines.push('→ Supabase 시크릿 <b>BROKER_ALLOWED_EMAILS</b> 값이 위 이메일과 정확히 같은지 확인해주세요.');
-    }else{
-      lines.push('서버 응답 ⚠️ 형식을 알 수 없음: '+esc(JSON.stringify(d).slice(0,80)));
-    }
-    box.innerHTML=lines.join('<br>');
-  }).catch(e=>{
-    const m=(e&&e.message)||'';
-    lines.push(`서버 호출 ❌ ${esc(m)}`);
-    if(/지원하지 않는 action|Unsupported|400/.test(m))
-      lines.push('→ <b>broker 함수가 옛 코드예요.</b> 최신 코드로 다시 Deploy 해주세요.');
-    else if(/not found|404|Failed to send/i.test(m))
-      lines.push('→ <b>broker 함수를 찾을 수 없어요.</b> 함수 이름이 정확히 <b>broker</b> 인지 확인해주세요.');
-    else if(/403|허용|activated|활성화/.test(m))
-      lines.push('→ 시크릿 <b>BROKER_ALLOWED_EMAILS</b> 를 등록하고 함수를 재배포했는지 확인해주세요.');
-    box.innerHTML=lines.join('<br>');
-  });
-}
-function renderBrokerDiag(){
-  if(!brokerEnabled())return '';                     // 꺼져 있으면 점검 패널도 숨김
-  if(!(window.Sync&&Sync.signedIn&&Sync.signedIn()))return '';
-  return `<div class="card tight" style="margin-bottom:14px">
-    <div class="row" style="margin-bottom:6px"><b style="font-size:.9rem">🔌 증권사 연동 점검</b>
-      <button class="btn ghost sm" onclick="brokerDiagnose()">확인</button></div>
-    <div class="tiny" id="bk-diag">버튼이 안 보일 때 눌러서 원인을 확인하세요.</div></div>`;
-}
-// 계좌 모달이 열린 뒤 허용된 계정에만 버튼을 끼워 넣는다
-function brokerMaybeShowButton(accId){
-  brokerCheckAllowed().then(ok=>{
-    if(!ok)return;
-    const slot=$('broker-btn-slot'); if(!slot)return;
-    slot.innerHTML=`<button class="btn ghost block" style="margin-bottom:10px" onclick="openBrokerModal('${accId}')">📥 토스증권에서 불러오기 (미국주식)</button>`;
-  });
-}
-// 투자 계좌가 여럿이면 어디에 연결할지 먼저 고른다
-function brokerPick(){
-  const invest=S.accounts.filter(a=>a.type==='invest');
-  if(!invest.length)return toast('투자 계좌를 먼저 추가해주세요');
-  if(invest.length===1)return openBrokerModal(invest[0].id);
-  openModal(`${sheetHead('어느 계좌에 연결할까요')}
-    <div class="tiny" style="margin-bottom:10px">토스증권 미국주식을 반영할 계좌를 골라주세요.</div>
-    ${invest.map(a=>`<div class="asset-item" onclick="openBrokerModal('${a.id}')">
-      <div class="a-ic" style="background:var(--terra-soft)">📈</div>
-      <div class="a-main"><div class="a-name">${esc(a.name)}</div>
-        <div class="a-sub">${fmtCur(a.balance,a.cur)}${a.broker==='toss'?' · <span class="pos">연결됨</span>':''}</div></div>
-    </div>`).join('')}`);
-}
-function openBrokerModal(accId){
-  const a=accById(accId);
-  if(!brokerReady()){ toast('클라우드 로그인 후 사용할 수 있어요'); return openSettings(); }
-  const linked=a&&a.brokerSeq;
-  openModal(`${sheetHead('토스증권 불러오기')}
-    <div class="tiny" style="margin-bottom:12px">토스증권의 <b>미국주식 평가금액·보유 종목</b>을 가져와 <b>${esc(a?a.name:'투자 계좌')}</b>에 반영해요.
-      <br>조회만 하며 주문은 하지 않아요.</div>
-    <div class="field"><label>연결할 토스 계좌</label>
-      <select id="bk-acc"><option value="">${linked?`현재: ${esc(String(a.brokerSeq))}번 계좌`:'계좌를 불러오세요'}</option></select>
-      <button class="btn ghost sm block" style="margin-top:7px" onclick="brokerLoadAccounts()">계좌 목록 불러오기</button></div>
-    <div class="card tight" style="margin-bottom:12px"><div class="tiny" id="bk-hint">계좌를 고른 뒤 아래 버튼을 눌러주세요.</div></div>
-    <button class="btn primary block" onclick="brokerSync('${accId}')">📥 미국주식 불러오기</button>
-    ${linked?`<button class="btn ghost block" style="margin-top:8px;color:var(--danger)" onclick="brokerUnlink('${accId}')">연결 해제</button>`:''}`);
-  if(linked)brokerLoadAccounts();
-}
-function brokerLoadAccounts(){
-  const h=$('bk-hint'); if(h)h.textContent='계좌 목록을 불러오는 중…';
-  Sync.callBroker({action:'accounts'}).then(d=>{
-    const sel=$('bk-acc'); if(!sel)return;
-    const list=Array.isArray(d.accounts)?d.accounts:[];
-    if(!list.length){ if(h)h.textContent='조회된 계좌가 없어요.'; return; }
-    sel.innerHTML=list.map(x=>`<option value="${x.accountSeq}">${esc(String(x.accountNo||''))} · ${esc(String(x.accountType||''))} (seq ${x.accountSeq})</option>`).join('');
-    if(h)h.textContent=`계좌 ${list.length}개를 불러왔어요.`;
-  }).catch(e=>{ if(h)h.innerHTML=`불러오지 못했어요 — ${esc(e.message||'')}`; });
-}
-function brokerSync(accId){
-  const a=accById(accId); if(!a)return;
-  const sel=$('bk-acc');
-  const seq=(sel&&sel.value)?Number(sel.value):(a.brokerSeq!==undefined?a.brokerSeq:undefined);
-  if(seq===undefined||Number.isNaN(seq))return toast('토스 계좌를 먼저 선택해주세요');
-  const h=$('bk-hint'); if(h)h.textContent='불러오는 중…';
-  Sync.callBroker({action:'us-summary',accountSeq:seq}).then(d=>{
-    a.brokerSeq=seq; a.broker='toss';
-    a.brokerAt=todayStr();
-    a.brokerHoldings=d.holdings||[];
-    a.brokerCashUsd=d.cashUsd||0;
-    // 계좌 통화가 USD면 그대로, KRW 계좌면 환율로 환산해 평가금액 갱신
-    if(a.cur==='USD') a.balance=Math.round((d.totalUsd||0)*100)/100;
-    else a.balance=Math.round(toKRW(d.totalUsd||0,'USD'));
-    save(); renderAll();
-    if(h)h.innerHTML=`✅ 평가금액 <b>$${(d.totalUsd||0).toLocaleString()}</b> · 종목 ${(d.holdings||[]).length}개 반영했어요`;
-    toast(`토스증권에서 불러왔어요 · $${(d.totalUsd||0).toLocaleString()}`);
-  }).catch(e=>{
-    const m=e.message||'';
-    if(h)h.innerHTML=`불러오지 못했어요 — ${esc(m)}${/키|TOSS_/.test(m)?'<br><span class="tiny">서버에 토스 API 키를 등록했는지 확인해주세요.</span>':''}`;
-  });
-}
-function brokerUnlink(accId){
-  const a=accById(accId); if(!a)return;
-  if(!confirm('토스증권 연결을 해제할까요? 기록된 잔액은 그대로 남아요.'))return;
-  delete a.broker; delete a.brokerSeq; delete a.brokerAt; delete a.brokerHoldings; delete a.brokerCashUsd;
-  commit('연결을 해제했어요');
-}
-// 자산 화면에 표시할 보유 종목 카드
-function renderBrokerCard(){
-  const el=$('broker-card'); if(!el)return;
-  const accs=S.accounts.filter(a=>a.type==='invest'&&a.broker==='toss'&&(a.brokerHoldings||[]).length);
-  if(!accs.length){
-    // 아직 연결 전이면, 허용된 계정에 한해 자산 화면에서 바로 연결할 수 있게 안내한다
-    // (계좌 수정 화면 안에만 두면 찾기 어렵다)
-    el.innerHTML=''; el.style.display='none';
-    const invest=S.accounts.filter(a=>a.type==='invest');
-    if(!invest.length)return;
-    brokerCheckAllowed().then(ok=>{
-      if(!ok||!$('broker-card'))return;
-      const e2=$('broker-card'); e2.style.display='';
-      e2.innerHTML=`<div class="row" style="gap:10px">
-        <div style="flex:1;font-size:.86rem"><b>🇺🇸 토스증권 불러오기</b>
-          <br><span class="tiny">미국주식 평가금액·보유 종목을 자동으로 가져와요</span></div>
-        <button class="btn primary sm" onclick="brokerPick()">연결</button></div>`;
-    });
-    return;
-  }
-  el.style.display='';
-  el.innerHTML=accs.map(a=>{
-    const hs=a.brokerHoldings||[];
-    const tot=hs.reduce((s,h)=>s+(h.value||0),0);
-    return `<div>
-      <div class="row" style="margin-bottom:8px"><b style="font-size:.92rem">🇺🇸 ${esc(a.name)} 보유 종목</b>
-        <button class="btn soft sm" onclick="openBrokerModal('${a.id}')">새로고침</button></div>
-      ${hs.map(h=>{
-        const pl=h.profit||0, rate=(h.profitRate||0)*100;
-        return `<div class="tx"><div class="t-main"><div class="t-name">${esc(h.symbol)} <span class="tiny">${esc(h.name||'')}</span></div>
-          <div class="t-sub">${h.quantity}주 · 평균 $${(h.avgPrice||0).toFixed(2)} → 현재 $${(h.lastPrice||0).toFixed(2)}</div></div>
-          <div style="text-align:right"><div class="t-amt num">$${(h.value||0).toLocaleString(undefined,{maximumFractionDigits:2})}</div>
-            <div class="tiny num ${pl>=0?'pos':'neg'}">${pl>=0?'+':''}$${Math.abs(pl).toFixed(2)} (${rate>=0?'+':''}${rate.toFixed(1)}%)</div></div></div>`;
-      }).join('')}
-      ${a.brokerCashUsd?`<div class="row" style="padding:8px 2px 0"><span class="tiny">달러 예수금</span><b class="num" style="font-size:.85rem">$${(a.brokerCashUsd||0).toLocaleString()}</b></div>`:''}
-      <div class="tiny" style="margin-top:7px;color:var(--faint)">${a.brokerAt||''} 기준 · 토스증권</div>
-    </div>`;
-  }).join('<div class="divider"></div>');
-}
-
 /* 외화 투자 계좌 납입은 실제 흐름(원화 이체 → 환전)을 그대로 따른다.
    입력 기준은 두 가지: 'rate'(보낸 원화 + 환율 → 받은 외화) / 'fx'(보낸 원화 + 받은 외화 → 환율) */
 let ilMode='rate', ilAcc=null;
@@ -2482,14 +2273,13 @@ function settleCard(id){
 }
 function openCardModal(id){
   const c=id?cardById(id):null;
-  cardDraft=c?JSON.parse(JSON.stringify(c)):{id:null,type:'check',name:'',last4:'',accountId:'',payDay:14,tiers:[],exclCats:[],perks:[],benefits:'',lastSettled:''};
+  cardDraft=c?JSON.parse(JSON.stringify(c)):{id:null,type:'check',name:'',accountId:'',payDay:14,tiers:[],exclCats:[],perks:[],benefits:'',lastSettled:''};
   cardDraft.tiersText=(cardDraft.tiers||[]).join(', ');
   renderCardModal();
 }
 function syncCardDraft(){
   const g=i=>$(i);
   if(g('cd-name'))cardDraft.name=g('cd-name').value;
-  if(g('cd-last4'))cardDraft.last4=(g('cd-last4').value||'').replace(/\D/g,'').slice(0,4);
   if(g('cd-acc'))cardDraft.accountId=g('cd-acc').value;
   if(g('cd-payday'))cardDraft.payDay=Math.min(28,Math.max(1,+g('cd-payday').value||14));
   if(g('cd-tiers'))cardDraft.tiersText=g('cd-tiers').value;
@@ -2517,11 +2307,7 @@ function renderCardModal(){
       <button class="${c.type==='check'?'on':''}" onclick="cdType('check')">체크카드</button>
       <button class="${c.type==='credit'?'on':''}" onclick="cdType('credit')">신용카드</button>
     </div></div>
-    <div class="grid2">
-      <div class="field"><label>카드 이름</label><input id="cd-name" value="${esc(c.name)}" placeholder="예: 신한 SOL트래블 체크"></div>
-      <div class="field"><label>카드 뒷 4자리 (선택)</label><input id="cd-last4" inputmode="numeric" maxlength="4" value="${esc(c.last4||'')}" placeholder="1234">
-        <div class="tiny" style="margin-top:4px">💬 결제 문자에 찍히는 번호예요. 넣어두면 <b>문자 자동 기록</b>이 이 카드를 알아봐요.</div></div>
-    </div>
+    <div class="field"><label>카드 이름</label><input id="cd-name" value="${esc(c.name)}" placeholder="예: 신한 SOL트래블 체크"></div>
     <div class="grid2">
       <div class="field"><label>${c.type==='credit'?'결제 계좌':'출금 계좌'}</label><select id="cd-acc"><option value="">선택 안 함</option>
         ${S.accounts.filter(a=>a.type==='checking').map(a=>`<option value="${a.id}" ${c.accountId===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}</select></div>
@@ -3638,12 +3424,6 @@ function openFxModal(){
       <input type="checkbox" id="fx-auto" ${f.auto?'checked':''} onchange="S.settings.fx.auto=this.checked;save()"><span>하루 한 번 자동 갱신 시도</span></label></div>
     <div class="tiny">갱신에 실패해도 마지막 환율을 계속 사용하니 달러 자산 계산은 멈추지 않아요.</div>`);
 }
-function saveFx(){
-  const v=+$('fx-manual').value;
-  if(v>0){S.settings.fx.usdkrw=Math.round(v*100)/100;S.settings.fx.at=todayStr()}
-  S.settings.fx.auto=$('fx-auto').checked;
-  commit('환율을 저장했어요');
-}
 
 /* ═════════ v6-1: 검색 + 필터 ═════════ */
 let sfOpen=false;
@@ -4191,8 +3971,6 @@ function openSettings(){
     ${renderSyncSection()}
     ${renderPushSection()}
     ${(window.Sync&&Sync.signedIn&&Sync.signedIn())?renderNotifySection():''}
-    ${renderSmsSection()}
-    ${renderBrokerDiag()}
     ${renderThemeSection()}
     <div class="grid2" style="margin-bottom:14px">
       <button class="btn ghost" onclick="openCatModal('exp')">🗂️ 카테고리 관리</button>
@@ -4273,14 +4051,14 @@ function importData(input){
         if(d[k]!==undefined&&(typeof d[k]!=='object'||Array.isArray(d[k])))throw new Error(k+' 형식 오류');
       });
       const staged=JSON.parse(JSON.stringify(d)); // 원본 분리
-      const prev=S; S=staged;
+      const prev=S; S=staged; _discInvalidate();
       try{ migrate(); totalAssets(); }        // 마이그레이션·집계 시험 실행
-      catch(err){ S=prev; throw new Error('데이터 구조가 손상됐어요') }
+      catch(err){ S=prev; _discInvalidate(); throw new Error('데이터 구조가 손상됐어요') }
       const n=S.tx.length, a=S.accounts.length;
       save(); closeModal(); renderAll();
       toast(`가져왔어요 · 내역 ${n}건 · 계좌 ${a}개`);
     }catch(e){
-      S=backup; migrate();                     // 원상 복구 보장
+      S=backup; _discInvalidate(); migrate();   // 원상 복구 보장
       toast('가져오지 못했어요 — '+(e.message||'올바른 백업 파일이 아니에요'));
     }
   };
@@ -4593,7 +4371,16 @@ applyTheme();
 
 /* ═════════ 클라우드 동기화 UI (window.Sync 엔진은 sync.js) ═════════ */
 // 클라우드에서 새 데이터를 채택했을 때 메모리 상태를 다시 읽어 화면 갱신
-window.reloadStateFromStorage=function(){ const d=store.load(); if(d){ S=d; migrate(); renderAll(); } };
+window.reloadStateFromStorage=function(){
+  const d=store.load();
+  if(!d)return;
+  S=d;
+  // ⚠️ S 를 통째로 바꿨으면 집계 캐시를 반드시 비운다.
+  //    monthTx 캐시 열쇠가 '개수+마지막 id' 라, 다른 기기에서 금액·카테고리만 고친
+  //    경우 열쇠가 그대로여서 옛 값이 화면에 남는다.
+  _discInvalidate();
+  migrate(); renderAll();
+};
 function syncStatusText(){
   if(!window.Sync) return '';
   switch(Sync.status){
@@ -4650,7 +4437,64 @@ function renderPushSection(){
   }
   const iosHint=(_isIOS() && Sync.isStandalone && !Sync.isStandalone())?' <b>홈 화면 앱</b>에서 켜주세요.':'';
   return `<button class="btn ghost block" style="margin-bottom:6px" onclick="togglePush()" id="push-btn">${_pushOn?'🔔 푸시 알림 끄기':'🔔 푸시 알림 켜기'}</button>
+    <div class="grid2" style="margin-bottom:6px">
+      <button class="btn ghost sm" onclick="pushDiagnose()">🩺 알림 점검</button>
+      <button class="btn ghost sm" onclick="pushTest()">✉️ 테스트 알림</button>
+    </div>
+    <div id="push-diag" class="tiny" style="margin:0 2px 14px"></div>
     <div class="tiny" style="margin:0 2px 14px">아침에 다가오는 결제·리마인더를 폰 알림으로 받아요.${iosHint}</div>`;
+}
+/* ── 알림이 왜 안 오는지 확인 ──────────────────────────────────────
+   푸시는 브라우저·기기·서버 어느 한 곳만 어긋나도 조용히 실패한다.
+   그래서 각 단계를 하나씩 짚어 어디서 막혔는지 그대로 보여준다. */
+async function pushDiagnose(){
+  const box=$('push-diag'); if(!box)return;
+  box.innerHTML='점검 중…';
+  const L=[];
+  const mark=(ok,txt)=>L.push(`${ok?'✅':'❌'} ${txt}`);
+  const warn=txt=>L.push(`⚠️ ${txt}`);
+
+  // 1) 이 기기
+  mark(true,'브라우저 푸시 지원');
+  if(_isIOS()&&Sync.isStandalone&&!Sync.isStandalone()){
+    warn('아이폰은 <b>홈 화면에 추가한 앱</b>에서 열어야 알림이 와요 (Safari 탭에서는 불가)');
+  }
+  const perm=(window.Notification&&Notification.permission)||'default';
+  mark(perm==='granted',`알림 권한: ${perm==='granted'?'허용됨':perm==='denied'?'<b>차단됨</b> — 기기 설정에서 Claude Flow 알림을 허용해주세요':'아직 요청 안 함 — 위 [푸시 알림 켜기]를 눌러주세요'}`);
+  try{
+    const reg=await navigator.serviceWorker.getRegistration();
+    mark(!!reg,'서비스워커 등록'+(reg?'':' — 페이지를 새로고침해주세요'));
+    const sub=reg&&await reg.pushManager.getSubscription();
+    mark(!!sub,'이 기기 구독'+(sub?'':' — 위 [푸시 알림 켜기]를 눌러주세요'));
+  }catch(e){ mark(false,'서비스워커 확인 실패 — '+esc(e.message||'')); }
+
+  // 2) 서버
+  try{
+    const d=await Sync.callDigest('status');
+    mark(!!d.vapidReady,'서버 알림 키(VAPID)'+(d.vapidReady?'':' — '+esc(d.vapidError||'설정되지 않음')));
+    if(d.vapidReady){
+      const same=d.vapidPublic===PUSH_VAPID_PUBLIC;
+      mark(same,'앱 ↔ 서버 키 일치'+(same?'':' — <b>서로 다른 키예요.</b> 서버 시크릿 <b>VAPID_PUBLIC_KEY</b> 를 앱과 같은 값으로 바꾸거나, 앱의 키를 서버 값으로 맞춰주세요. 키가 다르면 알림이 100% 실패합니다'));
+    }
+    mark(d.subscriptions>0,`서버에 등록된 기기 ${d.subscriptions||0}대`);
+  }catch(e){
+    mark(false,'알림 서버 호출 실패 — '+esc(e.message||''));
+    L.push('→ Supabase <b>Edge Functions</b> 에 <b>digest</b> 함수가 최신 코드로 배포돼 있는지 확인해주세요.');
+  }
+  box.innerHTML=L.join('<br>');
+}
+async function pushTest(){
+  const box=$('push-diag'); if(box)box.innerHTML='보내는 중…';
+  try{
+    const d=await Sync.callDigest('test');
+    if(d.ok){
+      if(box)box.innerHTML=`✅ ${d.sent}대에 보냈어요. 잠시 뒤 알림이 오지 않으면 기기의 알림 설정을 확인해주세요.`;
+      toast('테스트 알림을 보냈어요');
+    }else{
+      const why=(d.results&&d.results[0]&&(d.results[0].detail||('HTTP '+d.results[0].status)))||d.error||'알 수 없는 이유';
+      if(box)box.innerHTML=`❌ 보내지 못했어요 — ${esc(why)}`;
+    }
+  }catch(e){ if(box)box.innerHTML='❌ 호출 실패 — '+esc(e.message||''); }
 }
 function refreshPushBtn(){
   if(!(window.Sync && Sync.pushSubscribed)) return;
@@ -4742,397 +4586,6 @@ function restoreVersion(id){
 }
 
 
-/* ═════════ 문자 → 거래 자동 기록 ═════════
- * 폰이 받은 카드 결제 문자를 서버(sms_inbox)가 전달해 주면, 해석과 기록은
- * 여기(앱)에서 한다. 서버는 원문만 옮겨 주는 우체통 역할.
- *   확신이 서는 건(가맹점·카테고리·결제수단이 모두 확정) 바로 기록,
- *   하나라도 애매하면 '확인 필요' 목록에 넣고 사람이 결정한다. */
-
-// 가맹점 이름 → 카테고리 추정. 위에서부터 먼저 걸리는 규칙을 쓴다.
-// (쿠팡이츠→식비 가 쿠팡→쇼핑 보다 위에 있어야 하는 식으로 순서가 중요)
-const SMS_CAT_HINTS=[
-  [/스타벅스|투썸|이디야|메가엠지씨|메가커피|컴포즈|빽다방|폴바셋|할리스|커피빈|커피|카페|파리바게|뚜레쥬르|배스킨|던킨|공차|설빙|베이커리|블루보틀|탐앤탐스|스무디/i,'카페/간식'],
-  [/GS25|지에스25|CU|씨유|세븐일레븐|이마트24|emart24|미니스톱|편의점/i,'식비'],
-  [/쿠팡이츠|배달의민족|배민|요기요|맥도날드|버거킹|롯데리아|맘스터치|KFC|서브웨이|피자|치킨|김밥|국밥|칼국수|분식|식당|마라|우동|초밥|돈까스|삼겹|곱창|한식|중식|일식|뷔페|샐러드|샌드위치|푸드/i,'식비'],
-  [/호프|포차|주점|이자카야|와인|맥주|소주|막걸리|노래연습장|노래방|펍|바앤/i,'술/유흥'],
-  [/카카오T|카카오택시|택시|지하철|코레일|고속버스|시외버스|티머니|캐시비|SRT|대중교통|따릉이|킥보드|쏘카|그린카|철도/i,'교통'],
-  [/주유|칼텍스|SK에너지|S-OIL|에쓰오일|현대오일|오일뱅크|세차|정비|하이패스|주차장|주차/i,'자동차'],
-  [/올리브영|아리따움|이니스프리|화장품|더페이스샵|미샤|롭스/i,'미용'],
-  [/미용실|헤어샵|헤어|네일|살롱|바버/i,'헤어/네일'],
-  [/CGV|메가박스|롯데시네마|씨네|영화|공연|전시|예술의전당|교보문고|예스24|알라딘|영풍문고|서점/i,'문화/여가'],
-  [/스팀|STEAM|넥슨|넷마블|엔씨소프트|PLAYSTATION|플레이스테이션|닌텐도|블리자드|라이엇/i,'게임/취미'],
-  [/넷플릭스|NETFLIX|유튜브|YOUTUBE|왓챠|티빙|웨이브|디즈니|쿠팡플레이|스포티파이|멜론|지니뮤직|벅스|APPLE|ICLOUD|GOOGLE|OPENAI|CHATGPT|NOTION|ADOBE|MICROSOFT|ANTHROPIC|CLAUDE|구독/i,'구독'],
-  [/SKT|SK텔레콤|케이티|KT|LG유플러스|LGU|유플러스|알뜰폰|헬로모바일|통신요금/i,'통신'],
-  [/병원|의원|약국|치과|한의원|클리닉|메디컬|피부과|안과|정형외과|이비인후/i,'의료'],
-  [/헬스|피트니스|요가|필라테스|크로스핏|수영장|GYM/i,'운동'],
-  [/학원|교습|인프런|클래스101|과외|교육원|아카데미|스터디/i,'교육'],
-  [/항공|에어부산|에어서울|호텔|야놀자|여기어때|아고다|부킹|익스피디아|리조트|펜션|게스트하우스|여행/i,'여행'],
-  [/동물병원|펫|애견|반려/i,'반려동물'],
-  [/관리비|월세|임대|부동산|공인중개/i,'주거'],
-  [/한국전력|전기요금|도시가스|수도요금|건강보험|국민연금|세무|국세|지방세|공과금/i,'세금/공과금'],
-  [/ATM|수수료/i,'수수료'],
-  [/쿠팡|무신사|지그재그|에이블리|11번가|G마켓|지마켓|옥션|위메프|티몬|SSG|이마트|홈플러스|롯데마트|코스트코|COSTCO|다이소|백화점|아울렛|마켓컬리|알리익스프레스|ALIEXPRESS|AMAZON|네이버/i,'쇼핑'],
-];
-
-// 가맹점을 '브랜드 키'로 줄여 기억한다. 지점이 달라도 같은 규칙이 걸리도록
-// 한글은 앞 4글자, 영문·숫자는 앞 6글자만 쓴다. (예: 스타벅스강남점 → '스타벅스')
-function smsBrand(m){
-  const t=String(m||'').replace(/\s+/g,'').toLowerCase();
-  if(!t)return '';
-  return t.slice(0,/[가-힣]/.test(t)?4:6);
-}
-function smsCatGuess(text){
-  const names=EXP_CATS.map(c=>c[1]);
-  for(const [re,cat] of SMS_CAT_HINTS){ if(re.test(text)) return names.includes(cat)?cat:''; }
-  return '';
-}
-function smsDayDiff(a,b){
-  const d=(new Date(a+'T00:00:00')-new Date(b+'T00:00:00'))/86400000;
-  return Math.abs(Math.round(d));
-}
-// 결제수단 추정: ① 카드 뒷자리 ② 가맹점 규칙 ③ 카드사 이름이 일치하는 카드 ④ 기본값
-function smsPayFor(p){
-  if(p.last4){ const c=S.cards.find(x=>(x.last4||'')===p.last4); if(c)return{payKind:'card',payId:c.id}; }
-  const r=S.sms.rules[smsBrand(p.merchant)];
-  if(r&&r.payKind==='card'&&cardById(r.payId))return{payKind:'card',payId:r.payId};
-  if(r&&r.payKind==='account'&&accById(r.payId))return{payKind:'account',payId:r.payId};
-  if(p.issuer){
-    const alts=[p.issuer,p.issuer.replace(/^[A-Za-z]+/,'')].filter(x=>x&&x.length>=2);
-    const hit=S.cards.filter(c=>alts.some(a=>(c.name||'').includes(a)));
-    if(hit.length===1)return{payKind:'card',payId:hit[0].id};
-  }
-  if(S.sms.payKind==='card'&&cardById(S.sms.payId))return{payKind:'card',payId:S.sms.payId};
-  if(S.sms.payKind==='account'&&accById(S.sms.payId))return{payKind:'account',payId:S.sms.payId};
-  return null;
-}
-// 같은 문자를 두 번 처리하지 않기 위한 열쇠
-const smsKeyOf=p=>`${p.date}|${p.time}|${p.amount}|${smsBrand(p.merchant)}`;
-// 이미 같은 결제가 기록돼 있는지 (고정지출 자동기록과의 중복 방지)
-function smsDupTx(p,pay){
-  return S.tx.find(t=>t.type==='expense'&&t.amount===p.amount&&smsDayDiff(t.date,p.date)<=3
-    &&(!pay||(t.payKind===pay.payKind&&t.payId===pay.payId)));
-}
-// 승인취소 문자에 대응하는 원래 지출 찾기
-function smsCancelMatch(p){
-  const b=smsBrand(p.merchant).slice(0,3);
-  return S.tx.find(t=>t.type==='expense'&&t.amount===p.amount&&smsDayDiff(t.date,p.date)<=14
-    &&(!b||smsBrand(t.memo).startsWith(b)||b.startsWith(smsBrand(t.memo).slice(0,3))));
-}
-// 실제 기록
-function smsMakeTx(p,cat,pay,merchant,amount){
-  const t={id:uid(),type:p.kind==='income'?'income':'expense',date:p.date,amount:amount,
-    cat:cat,memo:merchant||'문자 기록',payKind:pay?pay.payKind:'cash',payId:pay?pay.payId:'',
-    defended:false,fxAt:fxRate(),src:'sms',smsKey:smsKeyOf(p),smsRaw:String(p.raw||'').slice(0,300)};
-  if(t.type==='expense'&&t.payKind==='card'){
-    const c=cardById(t.payId);
-    if(c&&c.type==='credit'){ t.months=Math.max(1,p.months||1); t.paidPortions=0; }
-  }
-  S.tx.push(t); applyBalance(t,1);
-  return t;
-}
-// 문자 한 건 처리 → 'applied' | 'queued' | 'skipped'
-function smsHandleOne(raw){
-  if(!(window.SmsParse&&SmsParse.parse))return 'skipped';
-  const p=SmsParse.parse(raw,todayStr());
-  if(!p.ok)return 'skipped';
-  if(S.tx.some(t=>t.smsKey&&t.smsKey===smsKeyOf(p)))return 'skipped';   // 같은 문자 재처리
-  if((S.sms.queue||[]).some(q=>q.p&&smsKeyOf(q.p)===smsKeyOf(p)))return 'skipped';
-
-  const pay=p.kind==='income'?null:smsPayFor(p);
-  const cat=p.kind==='income'?'' : (S.sms.rules[smsBrand(p.merchant)]||{}).cat || smsCatGuess(p.merchant+' '+raw);
-  const dup=p.kind==='expense'?smsDupTx(p,pay):null;
-  if(dup&&dup.fixedId)return 'skipped';           // 고정지출이 이미 기록한 건
-
-  const auto = S.sms.auto && p.kind==='expense' && !p.needsReview && !!pay && !!cat && !dup;
-  if(auto){ smsMakeTx(p,cat,pay,p.merchant,p.amount); return 'applied'; }
-
-  S.sms.queue=S.sms.queue||[];
-  if(S.sms.queue.length>=50)S.sms.queue.shift();
-  S.sms.queue.push({qid:uid(),at:new Date().toISOString(),p:p,cat:cat,pay:pay,dup:!!dup});
-  return 'queued';
-}
-function smsIngest(list){
-  const r={applied:0,queued:0,skipped:0};
-  (list||[]).forEach(raw=>{ const k=smsHandleOne(raw); r[k]++; });
-  if(r.applied){ S.sms.stat={n:(S.sms.stat.n||0)+r.applied,at:new Date().toISOString()}; }
-  if(r.applied||r.queued){ save(); renderAll(); }
-  return r;
-}
-function smsResultToast(r){
-  const parts=[];
-  if(r.applied)parts.push(`${r.applied}건 자동 기록`);
-  if(r.queued)parts.push(`${r.queued}건 확인 필요`);
-  if(!parts.length)return toast(r.skipped?'새로 기록할 결제 문자가 없어요':'받은 문자가 없어요');
-  toast('💬 '+parts.join(' · '));
-}
-
-/* ── 서버에서 가져오기 ── */
-let _smsBooted=false, _smsPolling=false, _smsLastPoll=0;
-function smsBoot(){
-  if(!(window.Sync&&Sync.smsReady&&Sync.smsReady()&&S.sms&&S.sms.on))return;
-  if(!_smsBooted){ _smsBooted=true; Sync.smsSubscribe(()=>smsPoll(true)); }
-  smsPoll();
-}
-// force=true 면 대기시간을 무시하고 바로 확인한다(문자 도착 알림·[지금 받아오기] 버튼).
-// 그 외에는 저장할 때마다 서버를 찌르지 않도록 20초 간격을 둔다.
-function smsPoll(force){
-  if(!(window.Sync&&Sync.smsClaim&&Sync.smsReady&&Sync.smsReady()&&S.sms&&S.sms.on))return Promise.resolve(null);
-  if(_smsPolling)return Promise.resolve(null);
-  if(!force&&Date.now()-_smsLastPoll<20000)return Promise.resolve(null);
-  _smsPolling=true; _smsLastPoll=Date.now();
-  return Sync.smsClaim(50).then(rows=>{
-    _smsPolling=false;
-    if(!rows||!rows.length){ if(force)toast('새로 온 문자가 없어요'); return null; }
-    const r=smsIngest(rows.map(x=>x.raw));
-    smsResultToast(r);
-    return r;
-  }).catch(()=>{ _smsPolling=false; return null; });
-}
-
-/* ── 홈 화면 알림 카드 ── */
-function renderSmsCard(){
-  const el=$('sms-slot'); if(!el)return;
-  const n=((S.sms&&S.sms.queue)||[]).length;
-  el.innerHTML = n? `<div class="banner"><div class="b-main">💬 확인이 필요한 문자 ${n}건</div>
-    <button class="btn dark sm" onclick="openSmsQueue()">확인</button></div>` : '';
-}
-
-/* ── 확인 목록 ── */
-function smsPayOpts(sel){
-  const v=sel?sel.payKind+':'+(sel.payId||''):'cash:';
-  const o=[`<option value="cash:" ${v==='cash:'?'selected':''}>💵 현금</option>`];
-  S.cards.forEach(c=>o.push(`<option value="card:${c.id}" ${v==='card:'+c.id?'selected':''}>💳 ${esc(c.name)}</option>`));
-  S.accounts.filter(a=>a.type==='checking').forEach(a=>o.push(`<option value="account:${a.id}" ${v==='account:'+a.id?'selected':''}>🏦 ${esc(a.name)}</option>`));
-  return o.join('');
-}
-function openSmsQueue(){
-  const q=(S.sms&&S.sms.queue)||[];
-  if(!q.length){ closeModal(); return toast('확인할 문자가 없어요'); }
-  openModal(`${sheetHead('문자 확인 ('+q.length+'건)')}
-    <div class="tiny" style="margin:-4px 2px 12px">읽은 내용이 맞는지만 확인하고 [기록]을 눌러주세요. 카드 문자가 아니거나 이미 적은 건 [무시].</div>
-    ${q.map(it=>smsQueueRow(it)).join('')}
-    <button class="btn ghost block" style="margin-top:6px;color:var(--danger)" onclick="smsQueueClearAll()">전체 무시</button>`);
-}
-function smsQueueRow(it){
-  const p=it.p, isInc=p.kind==='income', isCan=p.kind==='cancel';
-  const cats=isInc?INC_CATS:EXP_CATS;
-  const cat=it.cat|| (isInc?'기타수입':'');
-  const badge=isCan?'<span class="badge terra">승인취소</span>':isInc?'<span class="badge gray">입금</span>':'';
-  const head=`<div class="row" style="margin-bottom:8px">
-      <div style="font-size:.82rem"><b class="num">${fmt(p.amount)}</b> ${badge}
-        <br><span class="tiny">${esc(p.merchant||'가맹점 미상')} · ${esc(p.date)}${p.time?' '+esc(p.time):''}${p.issuer?' · '+esc(p.issuer):''}${p.last4?' ('+esc(p.last4)+')':''}${p.installment?' · '+p.months+'개월 할부':''}</span></div>
-    </div>`;
-  const rawBox=`<details style="margin-top:8px"><summary class="tiny">받은 문자 원문 보기</summary>
-      <div class="tiny" style="white-space:pre-wrap;margin-top:6px;color:var(--sub)">${esc(p.raw)}</div></details>`;
-
-  // 승인취소: 새로 기록할 게 아니라 '이미 적은 지출을 지울지'만 정하면 된다
-  if(isCan){
-    const match=smsCancelMatch(p);
-    return `<div class="card tight" style="margin-bottom:10px">${head}
-      <div class="tiny" style="margin-bottom:8px">${match
-        ? `결제가 취소됐어요. 이미 적어둔 <b>${esc(match.memo||match.cat)} ${fmt(match.amount)}</b> (${esc(match.date)}) 를 지울까요?`
-        : '결제가 취소됐어요. 짝이 되는 지출을 찾지 못했어요 — 아직 기록되지 않았거나 이미 지운 것 같아요.'}</div>
-      <div style="display:flex;gap:8px">
-        <button class="btn ghost" style="flex:1" onclick="smsQueueDrop('${it.qid}')">무시</button>
-        ${match?`<button class="btn primary" style="flex:1.4" onclick="smsCancelUndo('${it.qid}')">원거래 삭제</button>`:''}
-      </div>${rawBox}</div>`;
-  }
-
-  return `<div class="card tight" style="margin-bottom:10px">
-    ${head}
-    ${it.dup?`<div class="tiny" style="color:var(--terra-deep);margin-bottom:6px">⚠️ 같은 금액의 내역이 이미 있어요 — 중복인지 확인해주세요.</div>`:''}
-    ${p.needsReview?`<div class="tiny" style="color:var(--terra-deep);margin-bottom:6px">⚠️ ${esc(p.reason)} — 가맹점 이름을 직접 적어주세요.</div>`:''}
-    <div class="grid2">
-      <div class="field" style="margin-bottom:8px"><label>가맹점 / 내용</label>
-        <input id="sq-name-${it.qid}" value="${esc(p.merchant)}" placeholder="예: 스타벅스 강남점"></div>
-      <div class="field" style="margin-bottom:8px"><label>금액</label>
-        <input type="number" inputmode="numeric" id="sq-amt-${it.qid}" value="${p.amount}"></div>
-    </div>
-    <div class="grid2">
-      <div class="field" style="margin-bottom:8px"><label>카테고리</label>
-        <select id="sq-cat-${it.qid}">${cats.map(([e,n])=>`<option value="${n}" ${n===cat?'selected':''}>${e} ${n}</option>`).join('')}</select></div>
-      <div class="field" style="margin-bottom:8px"><label>${isInc?'입금 계좌':'결제수단'}</label>
-        <select id="sq-pay-${it.qid}">${isInc?`<option value="cash:">선택 안 함</option>${S.accounts.filter(a=>a.type==='checking').map(a=>`<option value="account:${a.id}">🏦 ${esc(a.name)}</option>`).join('')}`:smsPayOpts(it.pay)}</select></div>
-    </div>
-    ${isInc?'':`<label class="cb-row" style="margin-bottom:8px"><input type="checkbox" id="sq-rem-${it.qid}" checked><span class="tiny">이 가맹점은 앞으로 이대로 자동 기록</span></label>`}
-    <div style="display:flex;gap:8px">
-      <button class="btn ghost" style="flex:1" onclick="smsQueueDrop('${it.qid}')">무시</button>
-      <button class="btn primary" style="flex:1.4" onclick="smsQueueApply('${it.qid}')">기록</button>
-    </div>${rawBox}
-  </div>`;
-}
-function smsQueueApply(qid){
-  const it=(S.sms.queue||[]).find(x=>x.qid===qid); if(!it)return;
-  const p=it.p;
-  const merchant=(val('sq-name-'+qid)||'').trim()||p.merchant;
-  const amount=Math.round(+val('sq-amt-'+qid)||p.amount);
-  if(!checkAmt(amount))return;
-  const cat=val('sq-cat-'+qid)||(p.kind==='income'?'기타수입':'기타');
-  const pv=(val('sq-pay-'+qid)||'cash:').split(':');
-  const pay=pv[0]==='cash'?null:{payKind:pv[0],payId:pv[1]||''};
-  smsMakeTx({...p,merchant:merchant},cat,pay,merchant,amount);
-  if(p.kind!=='income'&&chkVal('sq-rem-'+qid,false)&&merchant){
-    S.sms.rules[smsBrand(merchant)]={cat:cat,payKind:pay?pay.payKind:'cash',payId:pay?pay.payId:''};
-  }
-  S.sms.queue=S.sms.queue.filter(x=>x.qid!==qid);
-  save(); renderAll(); toast('기록했어요');
-  (S.sms.queue.length?openSmsQueue():closeModal());
-}
-function smsQueueDrop(qid){
-  S.sms.queue=(S.sms.queue||[]).filter(x=>x.qid!==qid);
-  save(); renderAll();
-  (S.sms.queue.length?openSmsQueue():closeModal());
-}
-function smsQueueClearAll(){
-  if(!confirm('확인 대기 중인 문자를 모두 무시할까요? (기록은 만들지 않아요)'))return;
-  S.sms.queue=[]; save(); renderAll(); closeModal(); toast('모두 무시했어요');
-}
-function smsCancelUndo(qid){
-  const it=(S.sms.queue||[]).find(x=>x.qid===qid); if(!it)return;
-  const m=smsCancelMatch(it.p);
-  if(!m)return toast('짝이 되는 지출을 찾지 못했어요');
-  if(!confirm(`'${m.memo||m.cat}' ${fmt(m.amount)} 내역을 삭제할까요?`))return;
-  applyBalance(m,-1);
-  S.tx=S.tx.filter(x=>x.id!==m.id);
-  S.sms.queue=S.sms.queue.filter(x=>x.qid!==qid);
-  save(); renderAll(); toast('취소 처리했어요');
-  (S.sms.queue.length?openSmsQueue():closeModal());
-}
-
-/* ── 문자 붙여넣기 (자동화 없이도 쓸 수 있는 길) ── */
-function openSmsPaste(){
-  openModal(`${sheetHead('문자 붙여넣기')}
-    <div class="tiny" style="margin:-4px 2px 12px">받은 카드 결제 문자를 복사해서 붙여넣으면 알아서 읽어드려요. 여러 건을 붙여넣으려면 빈 줄로 구분해주세요.</div>
-    <div class="field"><textarea id="sms-paste" rows="7" placeholder="[Web발신]&#10;신한카드(1234)승인 홍*동&#10;12,000원 일시불&#10;08/22 14:23&#10;스타벅스강남점"></textarea></div>
-    <button class="btn primary block" onclick="smsPasteRun()">읽어보기</button>`);
-}
-function smsPasteRun(){
-  const raw=(val('sms-paste')||'').trim();
-  if(!raw)return toast('문자를 붙여넣어 주세요');
-  // 빈 줄 두 개 이상 = 문자 구분
-  const list=raw.split(/\n\s*\n+/).map(x=>x.trim()).filter(Boolean);
-  const r=smsIngest(list);
-  if(!r.applied&&!r.queued)return toast('결제 문자로 읽히지 않았어요 — 원문 그대로 붙여넣었는지 확인해주세요');
-  smsResultToast(r);
-  (S.sms.queue&&S.sms.queue.length)?openSmsQueue():closeModal();
-}
-
-/* ── 설정 화면 ── */
-function renderSmsSection(){
-  const signed=!!(window.Sync&&Sync.signedIn&&Sync.signedIn());
-  const on=!!(S.sms&&S.sms.on), nq=((S.sms&&S.sms.queue)||[]).length;
-  const nr=Object.keys((S.sms&&S.sms.rules)||{}).length;
-  return `<div class="card tight" style="margin-bottom:14px">
-    <div class="row" style="margin-bottom:6px"><b style="font-size:.9rem">💬 문자 자동 기록</b>
-      ${signed?(on?'<span class="badge green">켜짐</span>':'<span class="badge gray">꺼짐</span>'):''}</div>
-    <div class="tiny" style="margin-bottom:10px">카드 결제 문자가 오면 폰이 서버로 보내고, 앱이 열릴 때 자동으로 내역이 만들어져요. 매일 손으로 적을 일이 사라집니다.</div>
-    ${nq?`<button class="btn dark block sm" style="margin-bottom:8px" onclick="openSmsQueue()">확인이 필요한 문자 ${nq}건</button>`:''}
-    <button class="btn ghost block sm" style="margin-bottom:8px" onclick="openSmsPaste()">📋 문자 붙여넣기 (지금 바로 시험해보기)</button>
-    ${signed?`
-      <label class="cb-row" style="margin-bottom:6px"><input type="checkbox" id="sms-on" ${on?'checked':''} onchange="smsToggle(this.checked)"><span>문자 자동 기록 사용</span></label>
-      ${on?`
-      <label class="cb-row" style="margin-bottom:8px"><input type="checkbox" id="sms-auto" ${S.sms.auto?'checked':''} onchange="S.sms.auto=this.checked;save();toast(this.checked?'확신이 서는 건 바로 기록해요':'모든 문자를 확인 후 기록해요')"><span>확신이 서는 건 확인 없이 바로 기록</span></label>
-      <div class="field" style="margin-bottom:8px"><label>기본 결제수단 (카드 뒷자리를 못 읽었을 때)</label>
-        <select id="sms-pay" onchange="smsSetDefaultPay(this.value)">${smsPayOpts(S.sms.payKind?{payKind:S.sms.payKind,payId:S.sms.payId}:null)}</select></div>
-      <div class="grid2" style="margin-bottom:6px">
-        <button class="btn ghost sm" onclick="openSmsGuide()">📱 폰 설정 방법</button>
-        <button class="btn ghost sm" onclick="smsPoll(true)">지금 받아오기</button></div>
-      <div class="tiny">기억한 가맹점 ${nr}개${nr?` · <span class="link" onclick="smsClearRules()">모두 지우기</span>`:''}${(S.sms.stat&&S.sms.stat.n)?` · 지금까지 ${S.sms.stat.n}건 자동 기록`:''}</div>
-      `:''}`
-    :`<div class="tiny">☁️ 클라우드 로그인을 하면 폰에서 자동으로 보내는 기능을 쓸 수 있어요. 로그인 전에도 위의 <b>붙여넣기</b>는 그대로 동작합니다.</div>`}
-  </div>`;
-}
-function smsToggle(v){
-  S.sms.on=!!v; save();
-  if(v){ toast('켰어요 — [폰 설정 방법]을 따라 한 번만 설정하면 끝나요'); smsBoot(); }
-  else { if(window.Sync&&Sync.smsUnsubscribe)Sync.smsUnsubscribe(); _smsBooted=false; toast('껐어요'); }
-  openSettings();
-}
-function smsSetDefaultPay(v){
-  const pv=String(v||'cash:').split(':');
-  S.sms.payKind=pv[0]==='cash'?'':pv[0]; S.sms.payId=pv[1]||'';
-  save(); toast('저장했어요');
-}
-function smsClearRules(){
-  if(!confirm('기억해 둔 가맹점 규칙을 모두 지울까요?'))return;
-  S.sms.rules={}; save(); openSettings(); toast('지웠어요');
-}
-/* 폰 설정 안내 — 사용자가 복사해서 넣어야 할 값들을 실제 값으로 만들어 보여준다 */
-function smsEndpoint(){
-  const cfg=(window.Sync&&Sync.cfg)||null;
-  return cfg&&cfg.url?cfg.url+'/functions/v1/sms':'';
-}
-function openSmsGuide(){
-  openModal(`${sheetHead('폰 설정 방법')}
-    <div class="tiny" style="margin:-4px 2px 12px">한 번만 해두면 그다음부터는 아무것도 안 해도 돼요.</div>
-    <div id="sms-token-box" class="card tight" style="margin-bottom:12px">
-      <div class="tiny">수신 주소를 준비하고 있어요…</div></div>
-    <div class="sec-title" style="margin-top:0">아이폰 (단축어 앱)</div>
-    <div class="card tight" style="margin-bottom:12px"><div class="tiny" style="line-height:1.75">
-      1. <b>단축어</b> 앱 → 아래 <b>자동화</b> 탭 → 우측 상단 <b>＋</b><br>
-      2. <b>메시지</b> 선택 → <b>보낸 사람</b>에 카드사 번호(예: 15447200) 입력<br>
-      3. <b>즉시 실행</b> 선택 (실행 전 묻기 끄기) → 다음<br>
-      4. <b>새로운 빈 자동화</b> → 동작 검색에서 <b>URL의 콘텐츠 가져오기</b> 추가<br>
-      5. URL 칸에 위 <b>수신 주소</b> 붙여넣기<br>
-      6. <b>▸ 화살표</b>를 눌러 펼치고 → 방식 <b>POST</b><br>
-      7. <b>헤더</b> 추가: 키 <span class="num">Authorization</span> / 값에 위 <b>인증 값</b> 붙여넣기<br>
-      8. <b>본문 요청</b>을 <b>파일</b>로 바꾸고, 파일 자리에 <b>단축어 입력</b>(메시지 내용) 넣기<br>
-      9. 완료 → 카드 문자가 오면 자동으로 전송돼요
-    </div></div>
-    <div class="sec-title">안드로이드 (MacroDroid · Tasker)</div>
-    <div class="card tight" style="margin-bottom:12px"><div class="tiny" style="line-height:1.75">
-      1. <b>MacroDroid</b> 설치 → 매크로 추가<br>
-      2. 트리거: <b>SMS 수신</b> (발신번호를 카드사 번호로 제한)<br>
-      3. 동작: <b>HTTP 요청</b> → POST → 위 <b>수신 주소</b><br>
-      4. 헤더에 <span class="num">Authorization</span> = 위 <b>인증 값</b><br>
-      5. 본문(Body)에 <b>[sms_message]</b> 변수 넣기 → 저장
-    </div></div>
-    <div class="card tight warn"><div class="w-title">🔒 안전 안내</div>
-      <div class="w-body">수신 주소에는 이 계정만의 비밀 토큰이 들어 있어요. 남에게 공유하지 마세요. 혹시 새어 나갔다면 아래 <b>주소 새로 발급</b>을 누르면 예전 주소는 즉시 못 쓰게 됩니다.</div></div>
-    <button class="btn ghost block" style="margin-top:10px" onclick="smsRotateToken()">주소 새로 발급</button>`);
-  smsLoadToken();
-}
-function smsLoadToken(){
-  const box=$('sms-token-box'); if(!box)return;
-  if(!(window.Sync&&Sync.smsGetToken&&Sync.smsReady&&Sync.smsReady())){
-    box.innerHTML=`<div class="tiny">클라우드 로그인이 필요해요.</div>`; return;
-  }
-  Sync.smsGetToken()
-    .then(t=>t?t:Sync.smsIssueToken())
-    .then(t=>smsRenderToken(t))
-    .catch(e=>{ box.innerHTML=`<div class="tiny" style="color:var(--danger)">주소를 만들지 못했어요 — ${esc(e.message||'')}<br>Supabase에서 <b>schema-sms.sql</b> 을 실행했는지 확인해주세요.</div>`; });
-}
-function smsRenderToken(token){
-  const box=$('sms-token-box'); if(!box)return;
-  const url=smsEndpoint()+'?t='+token;
-  const key=(window.Sync&&Sync.cfg&&Sync.cfg.anonKey)||'';
-  box.innerHTML=`<div class="tiny" style="font-weight:700;margin-bottom:4px">① 수신 주소</div>
-    <div class="tiny num" style="word-break:break-all;background:var(--bg);padding:8px;border-radius:8px">${esc(url)}</div>
-    <button class="btn ghost sm block" style="margin:6px 0 12px" onclick="smsCopy(${JSON.stringify(url).replace(/"/g,'&quot;')},'수신 주소')">주소 복사</button>
-    <div class="tiny" style="font-weight:700;margin-bottom:4px">② 인증 값 (헤더 Authorization)</div>
-    <div class="tiny num" style="word-break:break-all;background:var(--bg);padding:8px;border-radius:8px">Bearer ${esc(key.slice(0,18))}…</div>
-    <button class="btn ghost sm block" style="margin-top:6px" onclick="smsCopy(${JSON.stringify('Bearer '+key).replace(/"/g,'&quot;')},'인증 값')">인증 값 복사</button>`;
-}
-function smsCopy(text,label){
-  const done=()=>toast((label||'내용')+'을 복사했어요');
-  if(navigator.clipboard&&navigator.clipboard.writeText){
-    navigator.clipboard.writeText(text).then(done).catch(()=>smsCopyFallback(text,done));
-  } else smsCopyFallback(text,done);
-}
-function smsCopyFallback(text,done){
-  try{
-    const ta=document.createElement('textarea'); ta.value=text;
-    ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta);
-    ta.select(); document.execCommand('copy'); document.body.removeChild(ta); done();
-  }catch(e){ toast('복사하지 못했어요 — 길게 눌러 직접 복사해주세요'); }
-}
-function smsRotateToken(){
-  if(!confirm('새 주소를 발급할까요? 지금 폰에 넣어둔 예전 주소는 더 이상 동작하지 않아요.'))return;
-  toast('발급 중…');
-  Sync.smsIssueToken().then(t=>{ smsRenderToken(t); toast('새 주소를 발급했어요 — 폰 설정의 URL을 바꿔주세요'); })
-    .catch(e=>toast('발급 실패 — '+(e.message||'')));
-}
-
 /* ═════════ 시작 ═════════ */
 autoApplyFixed();
 autoApplySaving();
@@ -5157,7 +4610,7 @@ if('serviceWorker' in navigator){
 window.addEventListener('load',()=>{ if(window.Sync){ Sync.on((s)=>{
   // 실제로 로그인해 본 적이 있는지 기록 (오류 배너를 신규 사용자에게 띄우지 않기 위함)
   if(s&&s.signedIn&&s.signedIn()&&!(S.settings&&S.settings.syncUsed)){ S.settings.syncUsed=true; save(); }
-  renderSyncBanner(); if(s&&s.status==='synced'){ refreshDigest(); smsBoot(); }
+  renderSyncBanner(); if(s&&s.status==='synced') refreshDigest();
 }); Sync.init(); renderSyncBanner(); } });
 </script>
 </body>
