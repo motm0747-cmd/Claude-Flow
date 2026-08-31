@@ -1,5 +1,5 @@
 // ══════════════════════════════════════════════════════════════════════
-// Claude Flow — 서버 자동화 + 웹 푸시 (Supabase Edge Function)
+// Claude Flow Pro — 서버 자동화 + 웹 푸시 (Supabase Edge Function)
 //
 // 매일 스케줄로 실행: 각 사용자의 flow_state 를 훑어 리마인더를 계산해
 // daily_digest 에 저장하고, '결제 임박/미기록' 같은 실행형 리마인더가 있으면
@@ -302,7 +302,7 @@ Deno.serve(async (req: Request) => {
         return json({ ok: false, error: "이 계정에 등록된 기기가 없어요. 먼저 '푸시 알림 켜기'를 눌러주세요" }, 400);
       }
       const payload = JSON.stringify({
-        title: "🔔 테스트 알림", body: "알림이 정상적으로 도착했어요. Claude Flow", url: "./", tag: "test",
+        title: "🔔 테스트 알림", body: "알림이 정상적으로 도착했어요. Claude Flow Pro", url: "./", tag: "test",
       });
       const results = [];
       for (const s of subs) {

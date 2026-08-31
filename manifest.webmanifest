@@ -1,6 +1,6 @@
 {
-  "name": "Claude Flow",
-  "short_name": "Flow",
+  "name": "Claude Flow Pro",
+  "short_name": "Flow Pro",
   "description": "가계부·자산관리 — 계좌·카드·투자·리포트를 한 곳에서.",
   "start_url": "./",
   "scope": "./",

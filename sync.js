@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════
- * Claude Flow — 클라우드 동기화 엔진 (Supabase)
+ * Claude Flow Pro — 클라우드 동기화 엔진 (Supabase)
  *
  * 설계 원칙
  *  1) 로컬 우선(local-first): localStorage 가 항상 로컬의 진실.

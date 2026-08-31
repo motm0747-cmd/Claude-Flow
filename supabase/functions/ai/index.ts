@@ -1,5 +1,5 @@
 // ══════════════════════════════════════════════════════════════════════
-// Claude Flow — 서버 AI (Supabase Edge Function)
+// Claude Flow Pro — 서버 AI (Supabase Edge Function)
 //
 // 목적: AI 키를 브라우저에 노출하지 않고 서버에만 두기. 로그인한 사용자만
 //       호출할 수 있고(로그인 JWT는 supabase-js 가 자동 첨부, Supabase가 검증),

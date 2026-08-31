@@ -1,9 +1,9 @@
 /* ═══════════════════════════════════════════════════════════════════════
- * Claude Flow — 서비스워커
+ * Claude Flow Pro — 서비스워커
  * 목적: 설치형 PWA + 오프라인 동작. 앱 껍데기는 캐시, API 호출은 절대 캐시하지 않음.
  * 캐시 버전을 올리면(아래 CACHE) 이전 캐시는 자동 정리된다.
  * ═══════════════════════════════════════════════════════════════════════ */
-const CACHE = 'claude-flow-v9';
+const CACHE = 'claude-flow-v10';
 
 // 앱 껍데기(오프라인에도 떠야 하는 정적 자원)
 const SHELL = [
@@ -87,7 +87,7 @@ self.addEventListener('push', (e) => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; }
   catch (_) { d = { body: e.data ? e.data.text() : '' }; }
-  const title = d.title || 'Claude Flow';
+  const title = d.title || 'Claude Flow Pro';
   const options = {
     body: d.body || '',
     icon: 'icons/icon-192.png',
