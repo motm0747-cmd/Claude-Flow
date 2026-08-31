@@ -251,7 +251,8 @@ header{display:flex;align-items:center;justify-content:space-between;padding:20p
   justify-content:center;font-size:1.05rem;flex-shrink:0}
 .a-main{flex:1;min-width:0}
 .a-name{font-weight:600;font-size:var(--t-base);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.a-sub{font-size:var(--t-xs);color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.a-sub{font-size:var(--t-xs);color:var(--faint);line-height:1.5;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .a-amt{font-weight:700;font-size:var(--t-base);white-space:nowrap}
 .ord-btns{display:flex;flex-direction:column;gap:3px;margin-left:8px}
 .ord-btns button{width:30px;height:22px;border:1px solid var(--line2);background:var(--surface);border-radius:7px;
@@ -768,6 +769,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
     <div class="card tight" id="list-housing"></div>
     <div class="card tight" id="housing-card"></div>
     <div class="sec-title">투자 <span class="link" onclick="openAccModal(null,'invest')">+ 추가</span></div>
+    <div id="inv-alert"></div>
     <div class="card tight" id="list-invest"></div>
     <div class="card" id="dca-card"></div>
     <div class="sec-title">저축 목표 <span class="link" onclick="openGoalModal()">+ 추가</span></div>
@@ -831,7 +833,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20260901-pro2';
+const APP_BUILD='20260901-pro3';
 const KEY='claudeflow_v1';
 const store={
   ok:(()=>{try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true}catch(e){return false}})(),
@@ -886,7 +888,15 @@ function migrate(){
   if(S.settings.profM===undefined)S.settings.profM=3;
   if(!S.settings.txView)S.settings.txView='cal';
   if(!S.settings.cardView)S.settings.cardView='manage';
-  S.accounts.forEach(a=>{if(!a.cur)a.cur='KRW'});
+  S.accounts.forEach(a=>{
+    if(!a.cur)a.cur='KRW';
+    if(a.type==='invest'){
+      // 투자 계좌 분류 — 예전 계좌는 통화로 국내/해외를 짐작한다
+      if(!a.invKind)a.invKind=(a.cur&&a.cur!=='KRW')?'overseas':'domestic';
+      a.fees=a.fees||{buy:0,sell:0,etc:0,min:0,from:'',to:''};
+      a.fxPref=a.fxPref||{spread:0,pref:0,from:'',to:''};
+    }
+  });
   S.invLogs.forEach(l=>{if(!l.cur)l.cur='KRW';if(!l.fxAt)l.fxAt=(l.cur==='USD'?(S.settings.fx.usdkrw||1380):1)});
   const _r=(S.settings.fx&&S.settings.fx.usdkrw)||1380;
   S.tx.forEach(t=>{if(t.fxAt===undefined)t.fxAt=_r});
@@ -1722,6 +1732,7 @@ function renderAssets(){
     ob.style.display=S.accounts.length>1?'':'none';}
   renderFxChip();
   renderAlloc();
+  renderInvAlerts();
   renderHousing();
   renderDCA();
   renderGoals();
@@ -1801,9 +1812,21 @@ function assetRow(a){
     if(dp)sub+=(sub?' · ':'')+`연 ${a.rate}% · 이자 <span class="pos">+${fmtK(dp.net)}원</span>${a.maturity?'':'/년'}`;
   }
   if(a.type==='invest'){
+    // 담을 정보가 많아 두 줄로 나눈다 — 1줄: 종류·기관 / 2줄: 납입·손익·우대
+    const km=invKindMeta(a);
     const put=S.invLogs.filter(l=>l.accountId===a.id).reduce((s,l)=>s+toKRW(l.amount,l.cur,l.fxAt),0);
     const pl=accKRW(a)-put;
-    sub+=(sub?' · ':'')+`납입 ${fmtK(put)}원 · <span class="${pl>=0?'pos':'neg'}">${pl>=0?'+':''}${fmtK(pl)}원</span>`;
+    const tail=[`납입 ${fmtK(put)}원`,
+      `<span class="${pl>=0?'pos':'neg'}">${pl>=0?'+':''}${fmtK(pl)}원</span>`];
+    const f=invFees(a), x=invFxPref(a);
+    const fst=periodState(f.from,f.to), xst=periodState(x.from,x.to);
+    if((+f.buy||+f.sell)&&fst.state==='expired')tail.push('<span style="color:var(--terra-deep)">수수료우대 종료</span>');
+    if(+x.pref){
+      if(xst.state==='active')tail.push(`환전 ${x.pref}%${xst.days!=null&&xst.days<=30?` <span style="color:var(--gold)">D-${xst.days}</span>`:''}`);
+      else if(xst.state==='expired')tail.push('<span style="color:var(--terra-deep)">환전우대 종료</span>');
+    }
+    if(a.yearCap>0)tail.push(`올해 한도 ${Math.round(invYearPaid(a)/a.yearCap*100)}%`);
+    sub=`${km.emo} ${km.label}${a.bank?' · '+esc(a.bank):''}<br>${tail.join(' · ')}`;
   }
   const group=S.accounts.filter(x=>x.type===a.type);
   const gi=group.findIndex(x=>x.id===a.id);
@@ -1871,12 +1894,72 @@ function openAccModal(id,presetType){
       <div class="field"><label class="cb-row" style="margin-top:26px"><input type="checkbox" id="ac-taxfree" ${a&&a.taxFree?'checked':''} onchange="rateHint()"><span>비과세</span></label></div>
     </div>
     <div class="card tight" id="ac-rate-box" style="margin-bottom:12px;display:none"><div class="tiny" id="ac-rate-hint"></div></div>`:''}
-    ${isInv&&a?`<button class="btn soft block" style="margin-bottom:8px" onclick="openInvLogModal('${a.id}')">＋ 투자금 납입 기록</button>`:''}
+    ${isInv?`
+    <div class="field"><label>계좌 종류</label>
+      <select id="ac-invkind" onchange="acInvKindSel()">
+        ${INV_KINDS.map(k=>`<option value="${k.k}" ${(a?invKindOf(a):(a?a.cur:'KRW')!=='KRW'?'overseas':'domestic')===k.k?'selected':''}>${k.emo} ${k.label}</option>`).join('')}
+      </select>
+      <div class="tiny" id="ac-invkind-hint" style="margin-top:5px"></div></div>
+    <div id="ac-tax-wrap" style="display:none">
+      <div class="grid2">
+        <div class="field"><label>절세 유형</label><select id="ac-taxkind">
+          ${TAX_KINDS.map(([k,l])=>`<option value="${k}" ${(a&&a.taxKind)===k?'selected':''}>${l}</option>`).join('')}</select></div>
+        <div class="field"><label>연 납입 한도 (원)</label>
+          <input type="number" inputmode="numeric" id="ac-yearcap" value="${a&&a.yearCap?a.yearCap:''}" placeholder="예: 20000000"></div>
+      </div>
+      ${a?`<div class="tiny" style="margin:-4px 0 12px">올해 납입 <b class="num">${fmtK(invYearPaid(a))}원</b>${a.yearCap?` / 한도 ${fmtK(a.yearCap)}원 (${Math.round(invYearPaid(a)/a.yearCap*100)}%)`:''}</div>`:''}
+    </div>
+    <details class="acc" style="margin-bottom:13px">
+      <summary>💸 거래 수수료 · 환전 우대 <span class="tiny" style="font-weight:600">${
+        (()=>{const f=invFees(a||{}),x=invFxPref(a||{});
+              const t=[]; if(+f.buy||+f.sell||+f.etc)t.push('수수료'); if(+x.pref||+x.spread)t.push('환전');
+              return t.length?t.join('·')+' 설정됨':'설정 안 함';})()}</span></summary>
+      <div class="acc-body">
+        <div class="tiny" style="margin-bottom:10px" id="ac-fee-hint"></div>
+        <div class="grid2">
+          <div class="field"><label>매수 수수료율 (%)</label>
+            <input type="number" inputmode="decimal" step="any" id="ac-fbuy" value="${a&&invFees(a).buy?invFees(a).buy:''}" placeholder="0.015"></div>
+          <div class="field"><label>매도 수수료율 (%)</label>
+            <input type="number" inputmode="decimal" step="any" id="ac-fsell" value="${a&&invFees(a).sell?invFees(a).sell:''}" placeholder="0.015"></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>기타 제비용 (%)</label>
+            <input type="number" inputmode="decimal" step="any" id="ac-fetc" value="${a&&invFees(a).etc?invFees(a).etc:''}" placeholder="0.0036"></div>
+          <div class="field"><label>최소 수수료 (${a&&a.cur==='USD'?'$':'원'})</label>
+            <input type="number" inputmode="decimal" step="any" id="ac-fmin" value="${a&&invFees(a).min?invFees(a).min:''}" placeholder="0 = 없음"></div>
+        </div>
+        <div class="tiny" style="margin:-4px 0 10px">💡 매도할 때만 붙는 현지 제비용(미국 SEC 수수료 등)은 <b>매도 수수료율</b>에 합쳐서 넣어주세요.</div>
+        <div class="grid2">
+          <div class="field"><label>수수료 우대 시작</label><input type="date" id="ac-ffrom" value="${a?invFees(a).from||'':''}"></div>
+          <div class="field"><label>우대 종료</label><input type="date" id="ac-fto" value="${a?invFees(a).to||'':''}"></div>
+        </div>
+        <div class="tiny" style="margin:-4px 0 4px">비워두면 기간 제한 없이 계속 적용해요. ${a?periodBadge(periodState(invFees(a).from,invFees(a).to),'수수료 우대'):''}</div>
+        <div id="ac-fx-wrap" style="display:none">
+          <div class="divider"></div>
+          <div class="grid2">
+            <div class="field"><label>환전 스프레드 (%)</label>
+              <input type="number" inputmode="decimal" step="any" id="ac-fxspread" value="${a&&invFxPref(a).spread?invFxPref(a).spread:''}" placeholder="1.0"></div>
+            <div class="field"><label>환전 우대율 (%)</label>
+              <input type="number" inputmode="decimal" step="any" id="ac-fxpref" value="${a&&invFxPref(a).pref?invFxPref(a).pref:''}" placeholder="95" oninput="acFxHint()"></div>
+          </div>
+          <div class="grid2">
+            <div class="field"><label>환전 우대 시작</label><input type="date" id="ac-fxfrom" value="${a?invFxPref(a).from||'':''}"></div>
+            <div class="field"><label>우대 종료</label><input type="date" id="ac-fxto" value="${a?invFxPref(a).to||'':''}"></div>
+          </div>
+          <div class="card tight" style="margin-bottom:4px"><div class="tiny" id="ac-fx-hint"></div></div>
+        </div>
+      </div>
+    </details>`:''}
+    ${isInv&&a?`<div class="grid2" style="margin-bottom:8px">
+      <button class="btn soft" onclick="openInvLogModal('${a.id}')">＋ 납입 기록</button>
+      <button class="btn ghost" onclick="openTradeCostModal('${a.id}')">🧮 거래 비용</button>
+    </div>`:''}
     <div style="display:flex;gap:8px;margin-top:6px">
       ${a?`<button class="btn ghost" style="flex:1" onclick="delAcc('${a.id}')">삭제</button>`:''}
       <button class="btn primary" style="flex:2" onclick="saveAcc('${a?a.id:''}','${type}')">저장</button>
     </div>`);
   if(isHou)houEstimate();
+  if(isInv)acInvKindSel();
   rateHint();
 }
 // 이자율 입력 시 예상 이자 미리보기
@@ -1928,7 +2011,14 @@ function saveAcc(id,type){
     roundsBase:$('ac-rbase')?(Math.round(numVal('ac-rbase'))||0):undefined,
     recogBase:$('ac-recbase')?(Math.round(numVal('ac-recbase'))||0):undefined,
     recogCap:$('ac-recog')?(Math.round(numVal('ac-recog'))||0):undefined,
-    deductCap:$('ac-dcap')?(Math.round(numVal('ac-dcap'))||0):undefined};
+    deductCap:$('ac-dcap')?(Math.round(numVal('ac-dcap'))||0):undefined,
+    invKind:$('ac-invkind')?val('ac-invkind'):undefined,
+    taxKind:$('ac-taxkind')?val('ac-taxkind'):undefined,
+    yearCap:$('ac-yearcap')?(Math.round(numVal('ac-yearcap'))||0):undefined,
+    fees:$('ac-fbuy')?{buy:+val('ac-fbuy')||0,sell:+val('ac-fsell')||0,etc:+val('ac-fetc')||0,
+      min:+val('ac-fmin')||0,from:val('ac-ffrom'),to:val('ac-fto')}:undefined,
+    fxPref:$('ac-fxspread')?{spread:+val('ac-fxspread')||0,pref:+val('ac-fxpref')||0,
+      from:val('ac-fxfrom'),to:val('ac-fxto')}:undefined};
   // 청약: 가입일이 있으면 가입 시 납입(1회차)이 최소한 반영되도록 보정
   if(type==='housing'&&data.joinDate&&!data.roundsBase){
     data.roundsBase=1;
@@ -1972,6 +2062,195 @@ function delAcc(id){
 /* 외화 투자 계좌 납입은 실제 흐름(원화 이체 → 환전)을 그대로 따른다.
    입력 기준은 두 가지: 'rate'(보낸 원화 + 환율 → 받은 외화) / 'fx'(보낸 원화 + 받은 외화 → 환율) */
 let ilMode='rate', ilAcc=null;
+
+/* ═════════ 투자 계좌: 분류 · 거래 수수료 · 환전 우대 ═════════
+ * 증권사 수수료와 환전 우대는 대부분 '기간 한정 이벤트'다.
+ * 그래서 값과 함께 기간을 받아 두고, 기간이 지나면 우대가 없는 것으로
+ * 계산한다(값을 지어내지 않는다) + 만료를 눈에 띄게 알린다. */
+const INV_KINDS=[
+  {k:'domestic',emo:'🇰🇷',label:'국내 주식',  hint:'매수·매도 각 0.015% 안팎 · 유관기관 제비용 0.0036% 안팎'},
+  {k:'overseas',emo:'🌎',label:'해외 주식',  hint:'매수·매도 각 0.07~0.25% · 매도 시 현지 제비용(SEC 등)은 매도 수수료에 포함해 넣으세요'},
+  {k:'tax',     emo:'🛡️',label:'절세 계좌',  hint:'ISA·연금저축·IRP 등. 수수료는 상품마다 달라요'}
+];
+const TAX_KINDS=[['isa','ISA (중개형·일임형)'],['pension','연금저축'],['irp','IRP'],['etc','기타 절세']];
+const invKindOf=a=>(a&&a.invKind)||'domestic';
+const invKindMeta=a=>INV_KINDS.find(k=>k.k===invKindOf(a))||INV_KINDS[0];
+
+/* 기간 상태: none(설정 안 함) / before(아직) / active(진행) / expired(끝남) */
+function periodState(from,to){
+  const t=todayStr();
+  if(!from&&!to)return{state:'none'};
+  if(from&&t<from)return{state:'before',days:dayGap(t,from)};
+  if(to&&t>to)   return{state:'expired',days:dayGap(to,t)};
+  return{state:'active',days:to?dayGap(t,to):null};
+}
+function periodBadge(st,label){
+  if(!st||st.state==='none')return'';
+  if(st.state==='expired')return`<span class="badge terra">${label} 기간 지남</span>`;
+  if(st.state==='before') return`<span class="badge gray">${label} ${st.days}일 뒤 시작</span>`;
+  if(st.days==null)       return`<span class="badge green">${label} 적용 중</span>`;
+  return st.days<=30?`<span class="badge gold">${label} D-${st.days}</span>`
+                    :`<span class="badge green">${label} 적용 중</span>`;
+}
+const invFees=a=>Object.assign({buy:0,sell:0,etc:0,min:0,from:'',to:''},(a&&a.fees)||{});
+const invFxPref=a=>Object.assign({spread:0,pref:0,from:'',to:''},(a&&a.fxPref)||{});
+
+/* 환전 우대를 반영한 실질 환율.
+   실질 = 기준 × (1 + 스프레드% × (1 − 우대율)) — 우대 기간 밖이면 우대 0으로 본다. */
+function invFxRate(a,base){
+  const x=invFxPref(a), st=periodState(x.from,x.to);
+  const on=(st.state==='active'||st.state==='none');
+  const pref=on?(+x.pref||0):0;
+  const sp=+x.spread||0, b=base||fxRate();
+  const r=v=>Math.round(b*(1+sp/100*(1-v/100))*100)/100;
+  return{base:b,spread:sp,pref,applied:pref,st,on,
+         rate:r(pref),          // 지금 적용되는 환율
+         noPref:r(0),           // 우대가 없을 때
+         best:r(+x.pref||0),    // 설정된 우대율대로면
+         saveKrw:Math.round((r(0)-r(pref))*100)/100};
+}
+/* 한 번 거래할 때 드는 수수료 (계좌 통화 기준) */
+function tradeCost(a,amount,side){
+  const f=invFees(a), st=periodState(f.from,f.to);
+  const rate=(side==='sell'?+f.sell:+f.buy)||0;
+  const etc=+f.etc||0;
+  let fee=(amount||0)*(rate+etc)/100;
+  if((+f.min||0)>0)fee=Math.max(fee,+f.min);
+  const isFx=!!(a&&a.cur&&a.cur!=='KRW');
+  return{fee:isFx?Math.round(fee*100)/100:Math.round(fee),rate,etc,st,
+         pct:amount>0?fee/amount*100:0};
+}
+/* 이 계좌에 걸린 기간 설정 중 확인이 필요한 것 */
+function invPeriodAlerts(){
+  const out=[];
+  S.accounts.filter(a=>a.type==='invest').forEach(a=>{
+    const f=invFees(a), x=invFxPref(a);
+    const hasFee=(+f.buy||+f.sell||+f.etc), hasFx=(+x.pref||+x.spread);
+    [[hasFee,periodState(f.from,f.to),'수수료 우대'],[hasFx,periodState(x.from,x.to),'환전 우대']]
+      .forEach(([has,st,label])=>{
+        if(!has)return;
+        if(st.state==='expired')out.push({a,label,st,kind:'expired'});
+        else if(st.state==='active'&&st.days!=null&&st.days<=30)out.push({a,label,st,kind:'soon'});
+      });
+  });
+  return out;
+}
+function renderInvAlerts(){
+  const el=$('inv-alert'); if(!el)return;
+  const al=invPeriodAlerts();
+  if(!al.length){el.innerHTML='';el.style.display='none';return}
+  el.style.display='';
+  // 같은 계좌의 여러 항목은 한 줄로 묶는다 (배너가 계좌 수만큼 쌓이지 않게)
+  const byAcc=new Map();
+  al.forEach(x=>{ if(!byAcc.has(x.a.id))byAcc.set(x.a.id,{a:x.a,exp:[],soon:[]});
+    byAcc.get(x.a.id)[x.kind==='expired'?'exp':'soon'].push(x); });
+  el.innerHTML=[...byAcc.values()].map(g=>{
+    const parts=[];
+    if(g.exp.length)parts.push(`${g.exp.map(x=>x.label).join('·')} 기간이 ${g.exp[0].st.days}일 전에 끝났어요 — 지금은 우대 없이 계산해요`);
+    if(g.soon.length)parts.push(`${g.soon.map(x=>x.label).join('·')}가 <b>${g.soon[0].st.days}일</b> 뒤 끝나요`);
+    return `<div class="banner" style="${g.exp.length?'border-color:var(--terra-line)':''}">
+      <div class="b-main">${g.exp.length?'⏰':'🔔'} <b>${esc(g.a.name)}</b> — ${parts.join(' · ')}</div>
+      <button class="btn ghost sm" onclick="openAccModal('${g.a.id}')">설정</button></div>`;
+  }).join('');
+}
+/* 절세 계좌: 올해 납입액 (한도 관리용) */
+function invYearPaid(a){
+  const y=todayStr().slice(0,4);
+  return S.invLogs.filter(l=>l.accountId===a.id&&String(l.date).slice(0,4)===y)
+    .reduce((s,l)=>s+toKRW(l.amount,l.cur,l.fxAt),0);
+}
+
+/* ── 거래 비용 계산기 ── */
+let tcAcc=null,tcSide='buy';
+
+/* 계좌 종류에 따라 관련 칸만 보여준다 (다시 그리면 입력 중인 값이 날아가므로 표시만 토글) */
+function acInvKindSel(){
+  const k=val('ac-invkind','domestic');
+  const meta=INV_KINDS.find(x=>x.k===k)||INV_KINDS[0];
+  const fxw=$('ac-fx-wrap'), taxw=$('ac-tax-wrap');
+  // 절세 계좌도 해외 자산을 담을 수 있으니, 통화가 원화가 아니면 환전 칸을 함께 보여준다
+  const showFx=(k==='overseas')||val('ac-cur','KRW')!=='KRW';
+  if(fxw)fxw.style.display=showFx?'':'none';
+  if(taxw)taxw.style.display=(k==='tax')?'':'none';
+  const h=$('ac-invkind-hint'); if(h)h.innerHTML='💡 '+meta.hint;
+  const fh=$('ac-fee-hint');
+  if(fh)fh.innerHTML=k==='domestic'
+    ? '국내 주식은 <b>매수·매도 수수료</b>와 <b>유관기관 제비용</b>이 붙어요. 증권사 앱의 수수료 안내에 적힌 값을 그대로 넣으세요.'
+    : k==='overseas'
+    ? '해외 주식은 수수료가 <b>외화 기준</b>이고, 여기에 <b>환전 비용</b>이 더해져요. 아래 환전 우대까지 넣으면 실제로 나가는 돈이 계산돼요.'
+    : 'ISA·연금저축은 상품마다 수수료가 달라요. 아는 값만 넣어도 됩니다.';
+  acFxHint();
+}
+function acFxHint(){
+  const el=$('ac-fx-hint'); if(!el)return;
+  const spread=+val('ac-fxspread')||0, pref=+val('ac-fxpref')||0;
+  if(spread<=0){ el.innerHTML='스프레드를 넣으면 우대가 실제로 얼마나 이득인지 계산해드려요. (원/달러는 보통 1% 안팎)'; return; }
+  const b=fxRate();
+  const r=v=>Math.round(b*(1+spread/100*(1-v/100))*100)/100;
+  const on=r(pref), off=r(0);
+  el.innerHTML=`기준 <b class="num">${b.toLocaleString()}원</b> · 우대 ${pref}% 적용 시 <b class="num">${on.toLocaleString()}원</b>
+    <span style="color:var(--faint)">(우대 없으면 ${off.toLocaleString()}원)</span><br>
+    100만원 환전하면 우대 없을 때보다 <b class="num pos">${fmt(Math.round(1000000/on*(off-on)))}</b> 이득이에요.`;
+}
+function openTradeCostModal(accId){
+  tcAcc=accId; tcSide='buy';
+  const a=accById(accId); if(!a)return;
+  const isFx=!!(a.cur&&a.cur!=='KRW');
+  const sym=(CURS[a.cur]||{}).sym||'₩';
+  const f=invFees(a);
+  openModal(`${sheetHead('거래 비용 계산')}
+    <div class="tiny" style="margin:-4px 2px 12px">${esc(a.name)} · ${invKindMeta(a).emo} ${invKindMeta(a).label}
+      ${periodBadge(periodState(f.from,f.to),'수수료 우대')}</div>
+    <div class="field"><div class="seg" id="tc-seg">
+      <button class="on" onclick="tcSetSide('buy')">매수</button>
+      <button onclick="tcSetSide('sell')">매도</button>
+      <button onclick="tcSetSide('both')">왕복</button>
+    </div></div>
+    <div class="field"><label>거래 금액 (${esc(sym)})</label>
+      <input type="number" inputmode="decimal" step="any" id="tc-amt" placeholder="${isFx?'1000':'1000000'}" oninput="tcHint()"></div>
+    <div class="card tight" style="margin-bottom:12px"><div class="tiny" id="tc-out">금액을 넣어보세요.</div></div>
+    ${(!f.buy&&!f.sell&&!f.etc)?`<div class="tiny" style="color:var(--terra-deep);margin-bottom:12px">⚠️ 이 계좌에 수수료가 설정돼 있지 않아요. 계좌 수정에서 넣어주세요.</div>`:''}
+    <button class="btn ghost block" onclick="openAccModal('${accId}')">수수료 설정 열기</button>`);
+  tcHint();
+}
+function tcSetSide(v){
+  tcSide=v;
+  document.querySelectorAll('#tc-seg button').forEach((b,i)=>b.classList.toggle('on',i===['buy','sell','both'].indexOf(v)));
+  tcHint();
+}
+function tcHint(){
+  const el=$('tc-out'); if(!el)return;
+  const a=accById(tcAcc); if(!a)return;
+  const amt=+val('tc-amt')||0;
+  if(amt<=0){el.innerHTML='금액을 넣어보세요.';return}
+  const isFx=!!(a.cur&&a.cur!=='KRW');
+  const sym=(CURS[a.cur]||{}).sym||'₩';
+  const money=v=>isFx?`${sym}${(Math.round(v*100)/100).toLocaleString(undefined,{minimumFractionDigits:2})}`:fmt(v);
+  const b=tradeCost(a,amt,'buy'), sl=tradeCost(a,amt,'sell');
+  const expired=b.st.state==='expired'||b.st.state==='before';
+  let rows='';
+  if(tcSide!=='sell')rows+=`<div class="row" style="padding:3px 0"><span>매수 수수료 <span style="color:var(--faint)">(${(b.rate+b.etc).toFixed(4)}%)</span></span><b class="num">${money(b.fee)}</b></div>`;
+  if(tcSide!=='buy') rows+=`<div class="row" style="padding:3px 0"><span>매도 수수료 <span style="color:var(--faint)">(${(sl.rate+sl.etc).toFixed(4)}%)</span></span><b class="num">${money(sl.fee)}</b></div>`;
+  const feeSum=(tcSide==='buy'?b.fee:tcSide==='sell'?sl.fee:b.fee+sl.fee);
+  // 해외 계좌는 원화↔외화 환전 비용도 실제로 나가는 돈이다 (사는 쪽 1회 기준)
+  let fxLine='', fxCostKrw=0;
+  if(isFx&&tcSide!=='sell'){
+    const fx=invFxRate(a);
+    if(fx.spread>0){
+      fxCostKrw=Math.round(amt*fx.rate-amt*fx.base);
+      fxLine=`<div class="row" style="padding:3px 0"><span>환전 비용 <span style="color:var(--faint)">(원화→${esc(sym)} 1회 · 스프레드 ${fx.spread}% · 우대 ${fx.applied}%)</span></span><b class="num">${fmt(fxCostKrw)}</b></div>`;
+    }
+  }
+  // 합계는 '지갑에서 실제로 나가는 돈' 기준 — 외화 수수료도 원화로 환산해 함께 더한다
+  const totalKrw=isFx?Math.round(feeSum*invFxRate(a).rate+fxCostKrw):feeSum;
+  const roundTrip=tcSide==='both'?(b.fee+sl.fee):null;
+  el.innerHTML=`${rows}${fxLine}
+    <div class="row" style="padding-top:7px;margin-top:5px;border-top:1px solid var(--line)">
+      <b>합계</b><b class="num" style="color:var(--terra-deep)">${isFx?`${money(feeSum)}${fxCostKrw?` + ${fmt(fxCostKrw)}`:''} ≈ ${fmt(totalKrw)}`:fmt(totalKrw)}</b></div>
+    ${roundTrip!=null?`<div class="tiny" style="margin-top:7px">📈 사고팔아 본전이 되려면 <b>약 ${(roundTrip/amt*100).toFixed(3)}%</b> 올라야 해요${isFx&&fxCostKrw?' (수수료만 · 환전 비용은 별도)':''}.</div>`:''}
+    ${expired?`<div class="tiny" style="color:var(--terra-deep);margin-top:7px">⏰ 수수료 우대 기간이 ${b.st.state==='expired'?'끝났어요':'아직 시작 전이에요'} — 지금 값이 맞는지 확인해주세요.</div>`:''}
+    <div class="tiny" style="margin-top:6px;color:var(--faint)">설정한 수수료율 기준 추정이에요. 실제 청구는 증권사 기준을 따릅니다.</div>`;
+}
 function openInvLogModal(accId){
   const a=accById(accId);
   ilAcc=accId;
@@ -1992,7 +2271,11 @@ function openInvLogModal(accId){
       <button onclick="ilSetMode('fx')">받은 ${esc(sym)} 직접 입력</button>
     </div></div>
     <div class="field" id="il-rate-w"><label>적용 환율 (1${esc(sym)} 당 원)</label>
-      <input type="number" inputmode="decimal" step="any" id="il-fx" value="${fxRate()}" oninput="ilHint()"></div>
+      <input type="number" inputmode="decimal" step="any" id="il-fx" value="${invFxRate(a).rate}" oninput="ilHint()">
+      ${(()=>{const fx=invFxRate(a); if(!(fx.spread>0))return'';
+        return`<div class="tiny" style="margin-top:5px">${fx.on
+          ? `💱 환전 우대 <b>${fx.applied}%</b> 반영 — 기준 ${fx.base.toLocaleString()}원 · 스프레드 ${fx.spread}%`
+          : `⏰ 환전 우대 기간이 아니라 <b>우대 없이</b> 계산했어요 (${fx.noPref.toLocaleString()}원)`}</div>`})()}</div>
     <div class="field" id="il-fx-w" style="display:none"><label>실제 받은 금액 (${esc(sym)})</label>
       <input type="number" inputmode="decimal" step="any" id="il-fxamt" placeholder="0" oninput="ilHint()">
       <div class="tiny" style="margin-top:5px">증권사에 찍힌 금액을 그대로 넣으면 환전 수수료까지 반영된 환율이 계산돼요.</div></div>
@@ -2033,9 +2316,17 @@ function ilHint(){
   if(!c.isFx){ h.innerHTML=c.krw>0?`${fmt(c.krw)}을 납입해요.`:''; return; }
   if(c.krw<=0){ h.innerHTML='보낸 금액을 입력해주세요.'; return; }
   if(!(c.rate>0)||!(c.amount>0)){ h.innerHTML=(ilMode==='fx')?'받은 금액을 입력해주세요.':'환율을 입력해주세요.'; return; }
+  const acc=accById(ilAcc), fx=acc?invFxRate(acc):null;
+  // 우대가 설정돼 있으면 '우대 덕에 얼마를 더 받았는지'를 같이 보여준다
+  let gain='';
+  if(fx&&fx.spread>0&&fx.on&&fx.applied>0&&c.rate>0){
+    const noPrefAmt=c.krw/fx.noPref;
+    const more=c.amount-noPrefAmt;
+    if(more>0.004)gain=`<br><span class="pos">우대 ${fx.applied}% 덕에 ${sym}${(Math.round(more*100)/100).toFixed(2)} 더 받았어요</span>`;
+  }
   h.innerHTML=(ilMode==='fx')
     ? `💱 ${fmt(c.krw)} → <b class="num">${sym}${c.amount.toLocaleString(undefined,{minimumFractionDigits:2})}</b><br>적용 환율 <b class="num">${Math.round(c.rate).toLocaleString()}원</b> / 1${sym} <span style="color:var(--faint)">(수수료 포함)</span>`
-    : `💱 ${fmt(c.krw)} → 받는 금액 <b class="num">${sym}${c.amount.toLocaleString(undefined,{minimumFractionDigits:2})}</b>`;
+    : `💱 ${fmt(c.krw)} → 받는 금액 <b class="num">${sym}${c.amount.toLocaleString(undefined,{minimumFractionDigits:2})}</b>${gain}`;
 }
 function saveInvLog(accId){
   const d=val('il-date');
