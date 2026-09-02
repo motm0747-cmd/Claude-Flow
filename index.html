@@ -647,6 +647,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
     <div id="sync-banner"></div>
     <div id="digest-slot"></div>
     <div id="streak-slot"></div>
+    <div id="flow-slot"></div>
     <div id="brief-slot"></div>
     <div id="report-banner"></div>
     <div id="dca-banner"></div>
@@ -806,7 +807,8 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
   <!-- ─────────── 리포트 ─────────── -->
   <div class="view" id="view-report">
-    <div class="card" id="nethist-card" style="margin-top:4px"></div>
+    <div class="card" id="flow-card" style="margin-top:4px"></div>
+    <div class="card" id="nethist-card"></div>
     <div class="card" id="sim-card"></div>
     <div class="card" id="whatif-card"></div>
     <div class="card" id="trend-card"></div>
@@ -837,7 +839,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20260902-pro4';
+const APP_BUILD='20260902-flow';
 const KEY='claudeflow_v1';
 const store={
   ok:(()=>{try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true}catch(e){return false}})(),
@@ -876,6 +878,7 @@ function migrate(){
   S.quick=S.quick||[];              // 빠른 입력 즐겨찾기
   S.quickHide=S.quickHide||[];      // 빠른 입력에서 숨긴 항목(자동 추천 포함)
   S.askLog=S.askLog||[];            // AI 대화 기록
+  S.flowAI=S.flowAI||null;          // 현금흐름 AI 진단 결과 {at, ym, text}
   S.notify=S.notify||{budget:true,card:true,fixed:true,inactive:true}; // 알림 종류
   S.fixed.forEach(f=>{ if(!f.kind)f.kind='expense'; if(f.from===undefined)f.from=''; if(f.to===undefined)f.to=''; });
   S.cards.forEach(c=>{ if(c.annualFee===undefined)c.annualFee=0; });
@@ -1367,6 +1370,7 @@ function renderHome(){
   $('storage-banner').innerHTML = store.ok?'':
     `<div class="banner" style="background:var(--terra-soft);border-color:var(--terra-line);border-left-color:var(--terra)"><div class="b-main">⚠️ 미리보기 환경이라 데이터가 저장되지 않아요. 파일을 저장해 Safari에서 열면 자동 저장됩니다.</div></div>`;
   renderStreakBanner();
+  renderFlowBanner();
   // 지난달 리포트 배너
   const pm=prevYM(ym);
   const showBanner = monthTx(pm).length>0 && !S.reports[pm];
@@ -3334,6 +3338,7 @@ function monthsWithData(){
   return[...set].sort().reverse().slice(0,18);
 }
 function renderReport(){
+  renderFlowCard();
   renderNetHist();
   renderSim();
   renderIncome();
@@ -3506,9 +3511,16 @@ function fmtAI(text){
   const blocks=t.split(/\n\s*\n/).map(b=>b.trim()).filter(Boolean);
   return blocks.map(b=>{
     const lines=b.split('\n').map(x=>x.trim()).filter(Boolean);
-    const isList=lines.length>1&&lines.every(x=>/^[-•*·]\s*/.test(x));
-    if(isList)return `<ul style="margin:0 0 9px 0;padding-left:17px">${
-      lines.map(x=>`<li style="margin-bottom:4px">${esc(x.replace(/^[-•*·]\s*/,''))}</li>`).join('')}</ul>`;
+    const bullet=x=>/^[-•*·]\s*/.test(x);
+    // '이번 달에 할 일:' 처럼 머리말 뒤에 목록이 오는 경우가 흔하다.
+    // 예전에는 모든 줄이 '-' 로 시작해야만 목록으로 봐서, 머리말이 있으면 통째로 문단이 됐다.
+    const i0=lines.findIndex(bullet);
+    if(i0>=0&&lines.slice(i0).every(bullet)&&lines.length-i0>=1){
+      const head=lines.slice(0,i0), items=lines.slice(i0);
+      return (head.length?`<p style="margin:0 0 6px 0">${head.map(esc).join('<br>')}</p>`:'')
+        +`<ul style="margin:0 0 9px 0;padding-left:17px">${
+          items.map(x=>`<li style="margin-bottom:4px">${esc(x.replace(/^[-•*·]\s*/,''))}</li>`).join('')}</ul>`;
+    }
     return `<p style="margin:0 0 9px 0">${lines.map(esc).join('<br>')}</p>`;
   }).join('');
 }
@@ -3643,6 +3655,249 @@ function goalSaved(g){
   return g.saved||0;
 }
 
+
+/* ═════════════════════════════════════════════════════════════════════
+ * 현금흐름 코치
+ *
+ * AI 에게 원본을 통째로 던지지 않는다. 먼저 여기서 '돈이 언제 얼마나
+ * 들어오고 나가는지'를 정확히 계산하고, AI 는 그 숫자를 읽고 해석만 한다.
+ * (숫자를 AI 가 만들면 틀려도 알 수가 없다)
+ *
+ * 두 가지를 나눠서 본다.
+ *   크기 — 한 달에 들어오는 돈 대비 고정비·강제저축·변동지출의 비중
+ *   시점 — 급여일·결제일·납입일이 엇갈려 잔액이 바닥나는 날이 있는지
+ * ═════════════════════════════════════════════════════════════════════ */
+function cashflowPlan(days){
+  const D=days||45, today=todayStr(), ym=thisYM();
+  const fxAll=(S.fixed||[]).filter(f=>f.active!==false);
+  const incF=fxAll.filter(f=>(f.kind||'expense')==='income');
+  const expF=fxAll.filter(f=>(f.kind||'expense')!=='income');
+  const forced=S.accounts.filter(a=>(a.type==='saving'||a.type==='housing')
+    &&(+a.monthly||0)>0&&(!a.maturity||a.maturity>=today));
+  const dca=Math.round(recentInvestPace());
+  const avg=recentAvg();
+
+  const incFixed=incF.reduce((s,f)=>s+(+f.amount||0),0);
+  const expFixed=expF.reduce((s,f)=>s+(+f.amount||0),0);
+  const forcedTotal=forced.reduce((s,a)=>s+(+a.monthly||0),0);
+  // 변동지출 = 최근 평균 지출에서 고정지출을 뺀 나머지 (적금·투자는 이체라 지출에 없다)
+  const variable=Math.max(0,Math.round(avg.exp-expFixed));
+  const inflow=incFixed>0?incFixed:Math.round(avg.inc);
+  const incFrom=incFixed>0?'fixed':(avg.inc>0?'avg':'none');
+  const outflow=expFixed+forcedTotal+dca+variable;
+  const net=inflow-outflow;
+
+  /* ── 앞으로 D일 잔액 흐름 (입출금 계좌 합계 기준) ──
+     크기가 아니라 '시점'을 본다. 카드로 낸 고정비는 결제일에 한 번에 빠지므로
+     여기서는 카드 결제일에만 반영한다(이중 차감 방지). */
+  const checking=S.accounts.filter(a=>a.type==='checking');
+  let bal=checking.reduce((s,a)=>s+accKRW(a),0);
+  const start=bal, dayVar=Math.round(variable/30.44);
+  const line=[]; let lowest=null, risk=null; const seen={};
+  for(let i=0;i<=D;i++){
+    const d=addDays(today,i), dom=+d.slice(8,10);
+    const ev=[];
+    if(i>0){
+      incF.forEach(f=>{if(+f.day===dom){bal+=+f.amount||0;ev.push({t:'in',n:f.name,v:+f.amount||0})}});
+      expF.forEach(f=>{if(+f.day===dom&&f.payKind!=='card'){bal-=+f.amount||0;ev.push({t:'out',n:f.name,v:+f.amount||0})}});
+      forced.forEach(a=>{if(+a.payDay===dom){bal-=+a.monthly||0;
+        ev.push({t:'save',n:a.name,v:+a.monthly||0})}});
+      S.cards.filter(c=>c.type==='credit'&&+c.payDay>0).forEach(c=>{
+        if(+c.payDay!==dom)return;
+        seen[c.id]=(seen[c.id]||0)+1;
+        // 첫 결제일은 실제 미결제액, 그 다음부터는 이번 달 사용 페이스로 추정
+        const amt=seen[c.id]===1?Math.round(creditPendingNet(c)):Math.round(cardMonthSpend(c.id,ym));
+        if(amt>0){bal-=amt;ev.push({t:'card',n:c.name,v:amt,est:seen[c.id]>1})}
+      });
+      bal-=dayVar;
+    }
+    const b=Math.round(bal);
+    line.push({d,bal:b,ev});
+    if(!lowest||b<lowest.bal)lowest={d,bal:b};
+    if(b<0&&!risk)risk={d,short:-b,days:i};
+  }
+
+  // 최근 6개월 흐름
+  const trend=[];
+  for(let i=5;i>=0;i--){
+    const dd=new Date(); dd.setMonth(dd.getMonth()-i);
+    const m=`${dd.getFullYear()}-${pad(dd.getMonth()+1)}`;
+    const t=totals(m);
+    if(t.inc||t.exp)trend.push({ym:m,inc:t.inc,exp:t.exp,bal:t.bal});
+  }
+  return{ym,today,days:D,
+    incF:incF.map(f=>({name:f.name,day:+f.day,amount:+f.amount||0})),
+    expF:expF.map(f=>({name:f.name,day:+f.day,amount:+f.amount||0,
+      byCard:f.payKind==='card'?((cardById(f.payId)||{}).name||'카드'):''})),
+    forced:forced.map(a=>({name:a.name,kind:a.type==='housing'?'청약':'적금',
+      monthly:+a.monthly||0,day:+a.payDay||0,
+      from:(accById(a.payFrom)||{}).name||''})),
+    dca,incFixed,expFixed,forcedTotal,variable,inflow,incFrom,outflow,net,
+    rates:{fixed:inflow>0?expFixed/inflow*100:0, forced:inflow>0?(forcedTotal+dca)/inflow*100:0,
+           variable:inflow>0?variable/inflow*100:0, save:inflow>0?(net+forcedTotal+dca)/inflow*100:0},
+    start,line,lowest,risk,trend,
+    monthsOfData:avg.n};
+}
+
+/* ── 요약 카드 (리포트 최상단) ── */
+function renderFlowCard(){
+  const el=$('flow-card'); if(!el)return;
+  const p=cashflowPlan();
+  if(p.inflow<=0&&p.outflow<=0){
+    el.innerHTML=`<div style="font-weight:700;font-size:.92rem">💹 현금흐름 코치</div>
+      <div class="empty">고정수입·고정비를 등록하면<br>돈이 언제 들어오고 나가는지 분석해드려요</div>
+      <button class="btn ghost block sm" onclick="switchView('assets')">고정 항목 등록하러 가기</button>`;
+    return;
+  }
+  const seg=[['고정비',p.expFixed,'var(--terra)'],['적금·청약',p.forcedTotal,'var(--green)'],
+             ['투자',p.dca,'var(--blue)'],['변동지출',p.variable,'var(--gold)']].filter(x=>x[1]>0);
+  const tot=Math.max(p.inflow,p.outflow)||1;
+  el.innerHTML=`<div class="row" style="margin-bottom:8px">
+      <b style="font-size:.92rem">💹 현금흐름 코치</b>
+      <span class="tiny">${p.incFrom==='fixed'?'고정수입 기준':p.incFrom==='avg'?'최근 평균 기준':'수입 미기록'}</span></div>
+    <div class="row" style="align-items:baseline;margin-bottom:6px">
+      <span class="tiny">한 달에 남는 돈</span>
+      <b class="num ${p.net>=0?'pos':'neg'}" style="font-size:1.25rem">${p.net>=0?'+':'−'}${fmtK(Math.abs(p.net))}원</b></div>
+    <div style="display:flex;height:9px;border-radius:var(--r-full);overflow:hidden;background:var(--fill-2);margin-bottom:8px">
+      ${seg.map(([n,v,c])=>`<div style="width:${v/tot*100}%;background:${c}" title="${n}"></div>`).join('')}
+    </div>
+    <div class="tiny" style="margin-bottom:10px">${seg.map(([n,v,c])=>
+      `<span class="legend-dot" style="background:${c}"></span>${n} ${fmtK(v)}`).join(' · ')}</div>
+    ${p.risk?`<div class="tiny" style="color:var(--terra-deep);margin-bottom:8px">⚠️ ${esc(p.risk.d.slice(5).replace('-','/'))}쯤 입출금 잔액이 <b>${fmtK(p.risk.short)}원</b> 모자랄 수 있어요.</div>`
+      :(p.lowest&&p.lowest.bal<p.inflow*0.2?`<div class="tiny" style="color:var(--gold);margin-bottom:8px">📉 ${esc(p.lowest.d.slice(5).replace('-','/'))}쯤 잔액이 ${fmtK(p.lowest.bal)}원까지 내려가요.</div>`:'')}
+    <button class="btn primary block sm" onclick="openFlowAI()">현금흐름 자세히 보기</button>`;
+}
+
+/* ── 전체 화면 ── */
+function openFlowAI(){
+  const p=cashflowPlan();
+  const saved=S.flowAI;
+  const money=v=>(v>=0?'+':'−')+fmtK(Math.abs(v))+'원';
+  const row=(label,v,color,sub)=>`<div class="row" style="padding:7px 0;gap:10px">
+    <span style="font-size:.86rem;min-width:0">${color?`<span class="legend-dot" style="background:${color}"></span>`:''}${label}
+      ${sub?`<br><span class="tiny">${sub}</span>`:''}</span>
+    <b class="num" style="font-size:.9rem;white-space:nowrap">${fmt(v)}</b></div>`;
+  openModal(`${sheetHead('현금흐름 코치')}
+    <div class="tiny" style="margin:-4px 2px 12px">숫자는 앱이 직접 계산하고, AI는 그 숫자를 읽고 해석해요.</div>
+
+    <div class="card tight" style="margin-bottom:12px">
+      <div class="row" style="align-items:baseline"><b style="font-size:.9rem">한 달 구조</b>
+        <b class="num ${p.net>=0?'pos':'neg'}" style="font-size:1.15rem">${money(p.net)}</b></div>
+      <div class="tiny" style="margin-bottom:6px">${p.incFrom==='fixed'?'고정수입 기준':p.incFrom==='avg'?`최근 ${p.monthsOfData}개월 평균 수입 기준`:'수입 기록이 없어 지출만 계산했어요'}</div>
+      <div class="divider"></div>
+      ${row('들어오는 돈',p.inflow,'',p.incF.length?p.incF.map(f=>`${esc(f.name)} ${f.day}일`).join(' · '):'')}
+      ${p.expFixed?row('고정비',p.expFixed,'var(--terra)',`${p.expF.length}건`):''}
+      ${p.forcedTotal?row('적금·청약',p.forcedTotal,'var(--green)',p.forced.map(f=>`${esc(f.name)} ${f.day?f.day+'일':''}`).join(' · ')):''}
+      ${p.dca?row('투자 납입',p.dca,'var(--blue)','최근 3회 평균'):''}
+      ${p.variable?row('변동지출',p.variable,'var(--gold)',`최근 ${p.monthsOfData}개월 평균에서 고정비를 뺀 값`):''}
+      <div class="divider"></div>
+      <div class="stat3">
+        <div class="cell"><div class="k">고정비 비중</div><div class="v num">${p.rates.fixed.toFixed(0)}%</div></div>
+        <div class="cell"><div class="k">저축·투자</div><div class="v num">${p.rates.forced.toFixed(0)}%</div></div>
+        <div class="cell"><div class="k">저축률</div><div class="v num ${p.rates.save>=25?'pos':''}">${p.rates.save.toFixed(0)}%</div></div>
+      </div>
+    </div>
+
+    <div class="card tight" style="margin-bottom:12px">
+      <div class="row" style="margin-bottom:4px"><b style="font-size:.9rem">앞으로 ${p.days}일 잔액</b>
+        <span class="tiny">입출금 계좌 합계</span></div>
+      ${flowChart(p)}
+      ${p.risk
+        ? `<div class="tiny" style="color:var(--terra-deep);margin-top:6px">⚠️ <b>${esc(p.risk.d.slice(5).replace('-','/'))}</b>쯤 <b>${fmt(p.risk.short)}</b>이 모자랄 수 있어요. 그전에 옮겨둘 돈을 준비하거나 카드 결제일을 확인해보세요.</div>`
+        : `<div class="tiny" style="margin-top:6px">가장 낮아지는 날은 <b>${esc((p.lowest||{}).d?p.lowest.d.slice(5).replace('-','/'):'-')}</b> · <b class="num">${fmt((p.lowest||{}).bal||0)}</b></div>`}
+      ${flowEvents(p)}
+    </div>
+
+    <div class="card tight" style="margin-bottom:12px">
+      <div class="row" style="margin-bottom:6px"><b style="font-size:.9rem">🤖 AI 진단</b>
+        ${saved?`<span class="tiny">${esc(String(saved.at).slice(0,10))}</span>`:''}</div>
+      <div id="flow-ai-out">${saved&&saved.text
+        ? fmtAI(saved.text)
+        : `<div class="tiny">위 숫자를 바탕으로 지금 구조가 괜찮은지, 무엇부터 손대면 좋을지 짚어드려요.</div>`}</div>
+      <button class="btn ${saved?'ghost':'primary'} block sm" style="margin-top:10px" id="flow-ai-btn"
+        onclick="flowDiagnose()">${saved?'다시 진단받기':'AI 진단 받기'}</button>
+      ${!aiEnabled()?`<div class="tiny" style="margin-top:6px;color:var(--terra-deep)">설정에서 클라우드 로그인 또는 Gemini 키를 넣으면 쓸 수 있어요.</div>`:''}
+    </div>
+
+    <button class="btn ghost block" onclick="closeModal();openAskModal('내 현금흐름에서 제일 먼저 고쳐야 할 게 뭐야?')">✦ 이어서 물어보기</button>`);
+}
+/* 잔액 곡선 — 0 아래로 내려가는 구간은 붉게 */
+function flowChart(p){
+  const L=p.line; if(L.length<2)return'';
+  const W=320,H=120,PT=8,PB=16;
+  const vals=L.map(x=>x.bal);
+  const hi=Math.max(...vals,0), lo=Math.min(...vals,0), span=(hi-lo)||1;
+  const x=i=>W*(i/(L.length-1)), y=v=>PT+(H-PT-PB)*(1-(v-lo)/span);
+  const path=L.map((pt,i)=>`${i?'L':'M'}${x(i).toFixed(1)},${y(pt.bal).toFixed(1)}`).join('');
+  const zero=y(0).toFixed(1);
+  return`<svg class="svg-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:120px">
+    ${lo<0?`<rect x="0" y="${zero}" width="${W}" height="${(H-PB-+zero).toFixed(1)}" fill="var(--terra-soft)"/>`:''}
+    <path d="${path}L${W},${H-PB}L0,${H-PB}Z" fill="var(--fill)"/>
+    <path d="${path}" fill="none" stroke="var(--terra)" stroke-width="2" stroke-linejoin="round"/>
+    <line x1="0" y1="${zero}" x2="${W}" y2="${zero}" stroke="var(--line2)" stroke-width="1" stroke-dasharray="3 3"/>
+    <text x="0" y="${H-3}" font-size="9" fill="var(--faint)">오늘</text>
+    <text x="${W}" y="${H-3}" font-size="9" fill="var(--faint)" text-anchor="end">${p.days}일 뒤</text>
+  </svg>`;
+}
+/* 앞으로 2주 안에 일어날 큰 이동만 추린다 */
+function flowEvents(p){
+  const soon=p.line.filter(x=>x.ev.length).slice(0,15);
+  const items=[];
+  soon.forEach(x=>x.ev.forEach(e=>{if(e.v>=10000)items.push({d:x.d,...e})}));
+  if(!items.length)return'';
+  const emo={in:'💰',out:'📌',save:'🔒',card:'💳'};
+  return`<div class="divider"></div>${items.slice(0,8).map(e=>`<div class="row" style="padding:4px 0;gap:8px">
+    <span class="tiny">${emo[e.t]||'•'} ${esc(e.d.slice(5).replace('-','/'))} ${esc(e.n)}${e.est?' <span style="color:var(--faint)">(추정)</span>':''}</span>
+    <span class="tiny num ${e.t==='in'?'pos':''}">${e.t==='in'?'+':'−'}${fmtK(e.v)}</span></div>`).join('')}`;
+}
+
+/* ── AI 진단 ── */
+const FLOW_PERSONA=`너는 한국 사회초년생 전용 '현금흐름 코치'야. 아래 데이터는 앱이 직접 계산한 정확한 숫자다. 이 숫자만 근거로 말하고, 없는 건 지어내지 마. 따뜻하지만 직설적으로, 항목 이름과 실제 금액·날짜를 인용해서 말해.`;
+const FLOW_TASK=`다음 세 가지를 순서대로 써:
+1) 지금 구조 한 줄 평가 — 들어오는 돈 대비 고정비·저축·변동지출의 균형이 어떤지.
+2) 눈에 띄는 것 — 잘하고 있는 것 하나, 걱정되는 것 하나. 날짜가 엇갈려 잔액이 바닥나는 구간이 있으면 반드시 짚어.
+3) 이번 달에 할 일 3가지 — 각각 구체적인 항목명과 금액으로. '아껴라' 같은 막연한 말은 쓰지 마.`;
+let flowBusy=false;
+async function flowDiagnose(){
+  if(flowBusy)return;
+  if(!aiEnabled()){ toast('설정에서 클라우드 로그인 또는 Gemini 키를 넣어주세요'); return openSettings(); }
+  const out=$('flow-ai-out'), btn=$('flow-ai-btn');
+  flowBusy=true; if(btn){btn.disabled=true;btn.textContent='분석 중…';}
+  if(out)out.innerHTML='<div class="tiny">현금흐름을 읽고 있어요…</div>';
+  try{
+    const p=cashflowPlan();
+    // AI 에 넘길 때는 일자별 곡선 전체가 아니라 요약과 큰 이동만 준다 (토큰·정확도)
+    const ctx={
+      기준일:p.today,
+      한달구조:{들어오는돈:p.inflow,수입출처:p.incFrom==='fixed'?'고정수입 등록분':'최근 평균',
+        고정비:p.expFixed,적금청약:p.forcedTotal,투자납입:p.dca,변동지출:p.variable,남는돈:p.net},
+      비중:{고정비:Math.round(p.rates.fixed)+'%',저축투자:Math.round(p.rates.forced)+'%',
+        변동지출:Math.round(p.rates.variable)+'%',저축률:Math.round(p.rates.save)+'%'},
+      고정수입:p.incF,고정비상세:p.expF,적금청약:p.forced,
+      입출금잔액:{지금:p.start,최저:(p.lowest||{}).bal,최저일:(p.lowest||{}).d,
+        부족예상:p.risk?{날짜:p.risk.d,모자란금액:p.risk.short}:null},
+      최근6개월:p.trend
+    };
+    const text=await gemini(`${FLOW_PERSONA}\n\n${FLOW_TASK}\n\n[현금흐름 데이터]\n${JSON.stringify(ctx)}\n\n${AI_FORMAT}`);
+    S.flowAI={at:new Date().toISOString(),ym:thisYM(),text};
+    save();
+    if(out)out.innerHTML=fmtAI(text);
+    if(btn)btn.textContent='다시 진단받기';
+  }catch(e){
+    if(out)out.innerHTML=`<div class="tiny" style="color:var(--terra-deep)">진단하지 못했어요 — ${esc((e&&e.message)||'')}</div>`;
+    if(btn)btn.textContent='다시 시도';
+  }finally{ flowBusy=false; if(btn)btn.disabled=false; }
+}
+/* 홈 배너 — 잔액이 바닥날 것으로 보일 때만 */
+function renderFlowBanner(){
+  const el=$('flow-slot'); if(!el)return;
+  let p; try{ p=cashflowPlan(); }catch(e){ el.innerHTML=''; return; }
+  if(!p.risk){ el.innerHTML=''; return; }
+  el.innerHTML=`<div class="banner" style="border-color:var(--terra-line)">
+    <div class="b-main">⚠️ <b>${esc(p.risk.d.slice(5).replace('-','/'))}</b>쯤 입출금 잔액이
+      <b>${fmtK(p.risk.short)}원</b> 모자랄 수 있어요</div>
+    <button class="btn dark sm" onclick="openFlowAI()">확인</button></div>`;
+}
 /* ═════════ 순자산 타임라인 ═════════
  * 홈의 순자산은 늘 '지금' 값이라 늘고 있는지 줄고 있는지 알 수 없었다.
  * 앱을 열고 기록할 때마다 그날의 순자산을 남겨 두고, 월 단위로 이어 그린다. */
