@@ -646,6 +646,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
     <div id="storage-banner"></div>
     <div id="sync-banner"></div>
     <div id="digest-slot"></div>
+    <div id="streak-slot"></div>
     <div id="brief-slot"></div>
     <div id="report-banner"></div>
     <div id="dca-banner"></div>
@@ -771,6 +772,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
     <div class="sec-title">투자 <span class="link" onclick="openAccModal(null,'invest')">+ 추가</span></div>
     <div id="inv-alert"></div>
     <div class="card tight" id="list-invest"></div>
+    <div class="card tight" id="invperf-card"></div>
     <div class="card" id="dca-card"></div>
     <div class="sec-title">저축 목표 <span class="link" onclick="openGoalModal()">+ 추가</span></div>
     <div class="card tight" id="list-goals"></div>
@@ -794,6 +796,8 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
     <div id="cardview-bill" style="display:none"></div>
     <div id="cardview-detail" style="display:none"></div>
     <div id="cardview-manage">
+    <button class="btn primary block" style="margin-bottom:12px" onclick="openCardPickModal()">💳 어느 카드로 쓸까?</button>
+    <div class="card tight" id="streak-card"></div>
     <div class="card" id="pick-card"></div>
     <div class="sec-title">내 카드 <span class="link" onclick="openCardModal()">+ 카드 추가</span></div>
     <div id="card-list"></div>
@@ -833,7 +837,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20260901-pro3';
+const APP_BUILD='20260902-pro4';
 const KEY='claudeflow_v1';
 const store={
   ok:(()=>{try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true}catch(e){return false}})(),
@@ -882,6 +886,7 @@ function migrate(){
     .forEach(k=>{ if(a[k]!==undefined)delete a[k]; }); });
   S.tx.forEach(t=>{ if(t.smsKey!==undefined){delete t.smsKey;delete t.smsRaw;delete t.src;} });
   if(!S.settings.fx)S.settings.fx={usdkrw:1380,at:'',auto:true};
+  if(!S.settings.fx.hist)S.settings.fx.hist={};   // {YYYY-MM-DD: 환율} — 타이밍 판단용
   const _fx=S.settings.fx;
   if(_fx.err===undefined)_fx.err=''; if(_fx.tried===undefined)_fx.tried=''; if(_fx.src===undefined)_fx.src='';
   if(S.settings.aiErr===undefined)S.settings.aiErr=''; if(S.settings.aiErrAt===undefined)S.settings.aiErrAt='';
@@ -1152,17 +1157,25 @@ function streakQualified(dates,n){
   }
   return ok;
 }
-function perkEstimates(card,ym){ // 혜택별 이번 달 예상 적립액 (전월 실적으로 활성 판정)
+/* extra: 아직 하지 않은 '가상 결제'. 결제수단 추천에서 이걸 넣었을 때
+   적립이 얼마나 늘어나는지 보려고 쓴다. S.tx 는 건드리지 않는다. */
+function perkEstimates(card,ym,extra){ // 혜택별 이번 달 예상 적립액 (전월 실적으로 활성 판정)
   const tiers=card.tiers||[];
   const activeTier=tiers.length?achievedTierBy(perfSpend(card,prevYM(ym)),tiers):Infinity;
+  const ex=extra?Object.assign({},extra,{type:'expense',payKind:'card',payId:card.id}):null;
+  const pool=ex?monthTx(ym).concat([ex]):monthTx(ym);
+  const all=ex?S.tx.concat([ex]):S.tx;
   return(card.perks||[]).map(p=>{
     const need=(p.tier===undefined?1:p.tier);
     // tier 0 = 이 혜택만 실적 조건이 없는 경우 (한 카드에 조건이 섞여 있을 수 있다)
     const active=need===0?true:(tiers.length?activeTier>=need:true);
-    const txs=monthTx(ym).filter(t=>t.type==='expense'&&t.payKind==='card'&&t.payId===card.id&&perkMatch(p,t))
+    const txs=pool.filter(t=>t.type==='expense'&&t.payKind==='card'&&t.payId===card.id&&perkMatch(p,t))
       .sort((a,b)=>a.date.localeCompare(b.date));
     const use=(p.maxCnt||0)>0?txs.slice(0,p.maxCnt):txs;
-    const boosted=(p.boost||0)>0?streakQualified(use.map(t=>t.date),Math.max(1,p.streakDays||1)):null;
+    // 연속일은 달 경계에서 끊기면 안 되므로 전체 내역으로 판정한다
+    const boosted=(p.boost||0)>0?streakQualified(
+      all.filter(t=>t.type==='expense'&&t.payKind==='card'&&t.payId===card.id&&perkMatch(p,t)).map(t=>t.date),
+      Math.max(1,p.streakDays||1)):null;
     let est=0, boostN=0;
     use.forEach(t=>{
       const up=!!(boosted&&boosted.has(t.date));
@@ -1236,6 +1249,7 @@ async function fetchFx(silent){
         S.settings.fx.usdkrw=Math.round(v*100)/100;
         S.settings.fx.at=todayStr(); S.settings.fx.err=''; S.settings.fx.src=s.n;
         S.settings.fx.rateDate=(s.date&&s.date(j))||'';   // 환율의 실제 기준일
+        fxRecord(S.settings.fx.usdkrw, S.settings.fx.rateDate||todayStr());
         save(); fxBusy=false;
         if(!silent)toast('환율 갱신: 1$ = '+S.settings.fx.usdkrw+'원');
         renderAll(); return true;
@@ -1267,6 +1281,7 @@ function openFxFailModal(err){
 function saveFxManual(){
   const v=numVal('fx-manual');
   if(v>0){S.settings.fx.usdkrw=Math.round(v*100)/100;S.settings.fx.at=todayStr();S.settings.fx.err='';S.settings.fx.src='직접 입력';
+    fxRecord(S.settings.fx.usdkrw);
     commit('환율을 저장했어요');}
   else toast('올바른 환율을 입력해주세요');
 }
@@ -1351,6 +1366,7 @@ function renderHome(){
   // 저장소 경고
   $('storage-banner').innerHTML = store.ok?'':
     `<div class="banner" style="background:var(--terra-soft);border-color:var(--terra-line);border-left-color:var(--terra)"><div class="b-main">⚠️ 미리보기 환경이라 데이터가 저장되지 않아요. 파일을 저장해 Safari에서 열면 자동 저장됩니다.</div></div>`;
+  renderStreakBanner();
   // 지난달 리포트 배너
   const pm=prevYM(ym);
   const showBanner = monthTx(pm).length>0 && !S.reports[pm];
@@ -1556,7 +1572,7 @@ function renderTxModal(){
     </div></div>`;
   const dateAmt=`<div class="grid2">
       <div class="field"><label>날짜</label><input type="date" id="tx-date" value="${d.date}"></div>
-      <div class="field"><label>금액 (원)</label><input type="number" inputmode="numeric" id="tx-amt" placeholder="0" value="${d.amount||''}"></div>
+      <div class="field"><label>금액 (원)</label><input type="number" inputmode="numeric" id="tx-amt" placeholder="0" value="${d.amount||''}" oninput="txPickHint()"></div>
     </div>`;
   /* ── 이체 ── */
   if(d.type==='transfer'){
@@ -1583,7 +1599,7 @@ function renderTxModal(){
         ${S.accounts.filter(a=>a.type==='checking').map(a=>`<option value="account|${a.id}" ${d.payKind==='account'&&d.payId===a.id?'selected':''}>${esc(a.name)} (계좌이체)</option>`).join('')}
         <option value="cash|" ${d.payKind==='cash'?'selected':''}>현금</option>
       </select>
-      ${payHint()}</div>${instFields()}`;
+      ${payHint()}<div id="tx-pick-hint"></div></div>${instFields()}`;
   }else{
     payOpts=`<div class="field"><label>입금 계좌</label>
       <select id="tx-pay" onchange="syncTxDraft()">
@@ -1608,6 +1624,7 @@ function renderTxModal(){
     const sel=$('tx-pay');
     if(sel&&sel.value){d.payKind=sel.value.split('|')[0];d.payId=sel.value.split('|')[1]||'';}
   }
+  txPickHint();
 }
 function instFields(){ // 할부(신용) + 실적 제외 토글(카드)
   const d=txDraft, c=d.payKind==='card'?cardById(d.payId||''):null;
@@ -1733,6 +1750,7 @@ function renderAssets(){
   renderFxChip();
   renderAlloc();
   renderInvAlerts();
+  renderInvPerf();
   renderHousing();
   renderDCA();
   renderGoals();
@@ -2063,6 +2081,98 @@ function delAcc(id){
    입력 기준은 두 가지: 'rate'(보낸 원화 + 환율 → 받은 외화) / 'fx'(보낸 원화 + 받은 외화 → 환율) */
 let ilMode='rate', ilAcc=null;
 
+
+/* ═════════ 투자 실질 수익률 ═════════
+ * 명목 수익만 보면 실제로 손에 남는 돈을 알 수 없다.
+ * 계좌에 넣어둔 수수료·환전 우대 설정으로 '들어간 비용'을 빼서 실질을 낸다.
+ * ⚠️ 과거 각 시점의 우대율은 알 수 없으므로 현재 설정 기준 추정이다. */
+function invPerf(a){
+  const logs=S.invLogs.filter(l=>l.accountId===a.id);
+  const put=logs.reduce((s,l)=>s+toKRW(l.amount,l.cur,l.fxAt),0);
+  const now=accKRW(a), nominal=now-put;
+  const x=invFxPref(a), f=invFees(a);
+  const fxBase=logs.filter(l=>l.cur&&l.cur!=='KRW').reduce((s,l)=>s+toKRW(l.amount,l.cur,l.fxAt),0);
+  const fxCost=Math.round(fxBase*(+x.spread||0)/100*(1-(+x.pref||0)/100));
+  const feeCost=Math.round(put*((+f.buy||0)+(+f.etc||0))/100);
+  const cost=fxCost+feeCost;
+  return{a,put,now,nominal,fxCost,feeCost,cost,real:nominal-cost,
+         nomPct:put>0?nominal/put*100:0, realPct:put>0?(nominal-cost)/put*100:0,
+         hasCost:!!(fxCost||feeCost)};
+}
+function renderInvPerf(){
+  const el=$('invperf-card'); if(!el)return;
+  const rows=S.accounts.filter(a=>a.type==='invest').map(invPerf).filter(r=>r.put>0);
+  if(!rows.length){el.style.display='none';el.innerHTML='';return}
+  el.style.display='';
+  const T=rows.reduce((t,r)=>({put:t.put+r.put,nominal:t.nominal+r.nominal,
+    fxCost:t.fxCost+r.fxCost,feeCost:t.feeCost+r.feeCost,cost:t.cost+r.cost,real:t.real+r.real}),
+    {put:0,nominal:0,fxCost:0,feeCost:0,cost:0,real:0});
+  const anyCost=rows.some(r=>r.hasCost);
+  const sign=v=>(v>=0?'+':'−')+fmtK(Math.abs(v))+'원';
+  return el.innerHTML=`<div class="row" style="margin-bottom:8px"><b style="font-size:.92rem">📉 투자 성과</b>
+      <span class="tiny">${anyCost?'수수료·환전 차감 후':'비용 설정 전'}</span></div>
+    <div class="stat3">
+      <div class="cell"><div class="k">납입 원금</div><div class="v num">${fmtK(T.put)}원</div></div>
+      <div class="cell"><div class="k">명목 손익</div>
+        <div class="v num ${T.nominal>=0?'pos':'neg'}">${sign(T.nominal)}</div>
+        <div class="d ${T.nominal>=0?'pos':'neg'}">${T.put>0?(T.nominal/T.put*100).toFixed(1):'0.0'}%</div></div>
+      <div class="cell"><div class="k">실질 손익</div>
+        <div class="v num ${T.real>=0?'pos':'neg'}">${sign(T.real)}</div>
+        <div class="d ${T.real>=0?'pos':'neg'}">${T.put>0?(T.real/T.put*100).toFixed(1):'0.0'}%</div></div>
+    </div>
+    ${anyCost?`<div class="row" style="padding:9px 2px 0"><span class="tiny">지금까지 들어간 비용</span>
+      <span class="tiny num"><b style="color:var(--terra-deep)">${fmt(T.cost)}</b>${(T.fxCost||T.feeCost)?` <span style="color:var(--faint)">(${[T.fxCost?'환전 '+fmt(T.fxCost):'',T.feeCost?'수수료 '+fmt(T.feeCost):''].filter(Boolean).join(' · ')})</span>`:''}</span></div>`:''}
+    <div class="divider"></div>
+    ${rows.map(r=>`<div class="row" style="padding:6px 0;gap:10px">
+      <span style="font-size:.85rem;min-width:0">${invKindMeta(r.a).emo} ${esc(r.a.name)}
+        <br><span class="tiny">납입 ${fmtK(r.put)}원${r.hasCost?` · 비용 ${fmt(r.cost)}`:''}</span></span>
+      <span style="text-align:right;white-space:nowrap">
+        <b class="num ${r.real>=0?'pos':'neg'}" style="font-size:.88rem">${sign(r.real)}</b>
+        <div class="tiny num">${r.hasCost?`명목 ${sign(r.nominal)}`:'비용 미설정'}</div></span></div>`).join('')}
+    <div class="tiny" style="margin-top:8px;color:var(--faint)">비용은 계좌에 넣어둔 <b>현재</b> 수수료·환전 우대 기준 추정이에요. 과거 시점의 우대율은 알 수 없어요.</div>`;
+}
+
+/* ═════════ 환율 타이밍 ═════════
+ * 지금까지는 환율을 매일 갱신하고 버렸다. 쌓아두면 '지금이 싼 편인지'를 말할 수 있다. */
+function fxRecord(rate,date){
+  try{
+    const f=S.settings.fx; f.hist=f.hist||{};
+    f.hist[date||todayStr()]=Math.round(rate*100)/100;
+    const ks=Object.keys(f.hist);
+    if(ks.length>400)ks.sort().slice(0,ks.length-400).forEach(k=>delete f.hist[k]);
+  }catch(e){}
+}
+function fxStats(months){
+  const h=(S.settings.fx&&S.settings.fx.hist)||{};
+  const from=addDays(todayStr(),-Math.round((months||6)*30.44));
+  const pairs=Object.keys(h).filter(d=>d>=from).sort().map(d=>({d,v:h[d]}));
+  if(pairs.length<8)return{n:pairs.length,enough:false};
+  const vals=pairs.map(p=>p.v);
+  const lo=Math.min(...vals), hi=Math.max(...vals);
+  const cur=fxRate();
+  const below=vals.filter(v=>v<cur).length;
+  const pct=Math.round(below/vals.length*100);   // 낮을수록 지금이 싸다
+  return{n:vals.length,enough:true,lo,hi,cur,pct,pairs,months:months||6,
+         avg:Math.round(vals.reduce((a,b)=>a+b,0)/vals.length*100)/100};
+}
+function fxVerdict(st){
+  if(!st.enough)return{txt:`환율 기록을 모으는 중이에요 (${st.n}일)`,cls:'',emo:'📊'};
+  if(st.pct<=20)return{txt:`최근 ${st.months}개월 중 <b>낮은 편</b> (하위 ${st.pct}%) — 환전하기 괜찮은 구간이에요`,cls:'pos',emo:'🟢'};
+  if(st.pct>=80)return{txt:`최근 ${st.months}개월 중 <b>높은 편</b> (상위 ${100-st.pct}%) — 급하지 않으면 기다려볼 만해요`,cls:'neg',emo:'🔴'};
+  return{txt:`최근 ${st.months}개월 중 <b>중간</b> (하위 ${st.pct}%)`,cls:'',emo:'🟡'};
+}
+function fxSpark(st,w,h){
+  if(!st.enough)return'';
+  const W=w||300,H=h||44,span=(st.hi-st.lo)||1;
+  const n=st.pairs.length-1;
+  const x=i=>(W)*(n?i/n:0), y=v=>4+(H-8)*(1-(v-st.lo)/span);
+  const line=st.pairs.map((p,i)=>`${i?'L':'M'}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join('');
+  return`<svg class="svg-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:${H}px;margin-top:6px">
+    <path d="${line}" fill="none" stroke="var(--blue)" stroke-width="1.8" stroke-linejoin="round"/>
+    <line x1="0" y1="${y(st.cur).toFixed(1)}" x2="${W}" y2="${y(st.cur).toFixed(1)}"
+      stroke="var(--terra)" stroke-width="1" stroke-dasharray="3 3" opacity=".7"/>
+  </svg>`;
+}
 /* ═════════ 투자 계좌: 분류 · 거래 수수료 · 환전 우대 ═════════
  * 증권사 수수료와 환전 우대는 대부분 '기간 한정 이벤트'다.
  * 그래서 값과 함께 기간을 받아 두고, 기간이 지나면 우대가 없는 것으로
@@ -2281,6 +2391,8 @@ function openInvLogModal(accId){
       <div class="tiny" style="margin-top:5px">증권사에 찍힌 금액을 그대로 넣으면 환전 수수료까지 반영된 환율이 계산돼요.</div></div>
     <div class="card tight" style="margin-bottom:12px"><div class="tiny" id="il-hint"></div></div>`
     :`<div class="tiny" id="il-hint" style="margin-bottom:12px"></div>`}
+    ${isFx?(()=>{const st=fxStats(6),v=fxVerdict(st);
+      return st.enough?`<div class="tiny" style="margin-bottom:12px">${v.emo} ${v.txt}</div>`:''})():''}
     <div class="tiny" style="margin-bottom:12px">💡 출금 계좌에서 <b>${esc(a?a.name:'투자 계좌')}</b>로 이체 처리되고, DCA 차트의 납입 원금으로 쌓여요. 시세가 변했다면 계좌의 <b>현재 평가금액</b>도 갱신해주세요.</div>
     <button class="btn primary block" onclick="saveInvLog('${accId}')">이체하고 납입 기록</button>`);
   ilHint();
@@ -2714,6 +2826,7 @@ function autoApplySaving(){
 
 /* ═════════ 카드 ═════════ */
 function renderCards(){
+  renderStreak();
   renderPickRate();
   const el=$('card-list'), ym=thisYM(), pm=prevYM(ym);
   if(!S.cards.length){el.innerHTML=`<div class="card"><div class="empty">체크카드·신용카드를 등록해보세요.<br>전월 실적과 혜택까지 한 번에 관리돼요.</div></div>`;return}
@@ -2883,6 +2996,88 @@ function addPerk(){
   renderCardModal();toast('혜택 추가됨 — 아래 [저장]을 눌러야 반영돼요');
 }
 
+
+const addDays=(d,n)=>{const t=new Date(d+'T00:00:00');t.setDate(t.getDate()+n);
+  return `${t.getFullYear()}-${pad(t.getMonth()+1)}-${pad(t.getDate())}`};
+
+/* ═════════ 결제수단 추천 — "이거 어느 카드로 쓸까?" ═════════
+ * 적립률만 비교하지 않는다. 남은 월 한도·전월 실적 활성 여부·연속일 달성까지
+ * 넣고, '이 결제를 이 카드로 하면 적립이 얼마나 늘어나는지'를 직접 계산한다. */
+function cardPick(q){
+  const date=q.date||todayStr(), ym=ymOf(date);
+  const amount=Math.round(q.amount||0);
+  if(!(amount>0)||!S.cards.length)return[];
+  const hypo={date,amount,cat:q.cat||'기타',memo:q.memo||'',via:q.via||'',months:1,noPerf:false};
+  return S.cards.map(c=>{
+    const before=perkEstimates(c,ym), after=perkEstimates(c,ym,hypo);
+    const gain=Math.max(0,Math.round(after.reduce((s,e)=>s+e.est,0)-before.reduce((s,e)=>s+e.est,0)));
+    const hp=Object.assign({},hypo,{type:'expense',payKind:'card',payId:c.id});
+    // 어느 혜택에서 늘었는지 / 한도에 막혀 못 받는 게 있는지
+    const from=after.map((e,i)=>({e,p:e.p,d:Math.round(e.est-before[i].est)}))
+      .filter(x=>x.d>0).sort((a,b)=>b.d-a.d);
+    const blocked=after.map((e,i)=>({e,p:e.p,d:Math.round(e.est-before[i].est)}))
+      .filter(x=>x.d<=0&&perkMatch(x.p,hp)&&(x.e.active?x.e.capped:true));
+    // 이 결제로 연속일이 채워져 2배가 붙는지
+    const streakUp=after.some((e,i)=>(e.p.boost||0)>0&&(e.p.streakDays||0)>1&&e.boostN>before[i].boostN);
+    // 전월 실적 진행
+    const tiers=c.tiers||[];
+    let perf=null;
+    if(c.type==='credit'&&tiers.length){
+      const cur=perfSpend(c,ym), need=tiers[0];
+      if(cur<need)perf={left:need-cur,reach:cur+amount>=need,need};
+    }
+    return{card:c,gain,from,blocked,perf,streakUp};
+  }).sort((a,b)=>b.gain-a.gain);
+}
+function cardPickReason(r){
+  const out=[];
+  if(r.from.length){
+    const t=r.from[0];
+    out.push(`<b>${esc(t.p.name)}</b> ${t.p.kind==='percent'?((t.e.boostN>0&&(t.p.boost||0)>0)?t.p.boost:t.p.value)+'%':'정액'}`);
+  }
+  r.blocked.slice(0,2).forEach(b=>{
+    out.push(b.e.active?`${esc(b.p.name)} 한도 다 참`:`${esc(b.p.name)} 잠김(전월 실적)`);
+  });
+  if(r.streakUp)out.push(`<span class="pos">⚡ 연속 달성 → 2배 적용</span>`);
+  if(r.perf)out.push(r.perf.reach
+    ? `<span class="pos">이걸로 전월 실적 ${fmtK(r.perf.need)}원 달성</span>`
+    : `실적 ${fmtK(r.perf.left)}원 남음`);
+  return out.join(' · ');
+}
+
+/* ═════════ 연속 이용 스트릭 ═════════
+ * "3일 연속 쓰면 2배" 같은 조건은 하루만 걸러도 처음부터 다시다.
+ * 오늘 한 건이면 달성인지 / 이미 끊겼는지를 미리 알려준다. */
+function cardStreaks(card,ym){
+  const M=ym||thisYM(), today=todayStr(), yst=addDays(today,-1);
+  const tiers=card.tiers||[];
+  const activeTier=tiers.length?achievedTierBy(perfSpend(card,prevYM(M)),tiers):Infinity;
+  return(card.perks||[]).filter(p=>(p.boost||0)>0&&(p.streakDays||0)>1).map(p=>{
+    const need=(p.tier===undefined?1:p.tier);
+    const active=need===0?true:(tiers.length?activeTier>=need:true);
+    const set=new Set(S.tx.filter(t=>t.type==='expense'&&t.payKind==='card'&&t.payId===card.id&&perkMatch(p,t))
+      .map(t=>t.date));
+    const runTo=end=>{let n=0,c=end;while(set.has(c)){n++;c=addDays(c,-1)}return n};
+    const rToday=runTo(today), rYst=runTo(yst), N=p.streakDays;
+    let state;
+    if(rToday>=N)          state='done';       // 오늘 결제분은 이미 2배
+    else if(rToday>0)      state='partial';    // 오늘 썼지만 아직 부족
+    else if(rYst>=N-1)     state='ready';      // 오늘 한 건이면 달성
+    else if(rYst>0)        state='building';
+    else                   state='none';
+    return{p,active,N,rToday,rYst,state,
+           left:state==='partial'?N-rToday:(state==='building'?N-rYst-1:0)};
+  });
+}
+/* 오늘 움직이면 이득인 것만 (홈·카드 화면 알림용) */
+function streakActionable(){
+  const out=[];
+  S.cards.forEach(c=>cardStreaks(c).forEach(s=>{
+    if(!s.active)return;
+    if(s.state==='ready'||s.state==='building')out.push({c,s});
+  }));
+  return out.sort((a,b)=>(a.s.state==='ready'?-1:1)-(b.s.state==='ready'?-1:1));
+}
 /* ═════════ 카드사 혜택 묶음 (프리셋) ═════════
  * 카드사 혜택은 '영역'이 여러 개라 하나씩 넣기 번거롭다.
  * 자주 쓰는 구성을 한 번에 넣고, 세부 값은 각자 카드 약관에 맞게 고치도록 한다.
@@ -2912,6 +3107,121 @@ const PERK_PRESETS=[{
      kind:'percent',value:50,boost:0,streakDays:0,via:'',minAmt:0,capM:5000,maxCnt:0,tier:1,bill:false}
   ]
 }];
+
+/* ── 결제수단 추천 화면 ── */
+let cpVia=false;
+function openCardPickModal(preset){
+  const p=preset||{};
+  cpVia=!!p.via;
+  const anyVia=S.cards.some(c=>(c.perks||[]).some(k=>k.via==='simple'));
+  openModal(`${sheetHead('어느 카드로 쓸까?')}
+    <div class="tiny" style="margin:-4px 2px 12px">남은 월 한도·전월 실적·연속일까지 따져서 <b>실제로 더 받는 금액</b>을 계산해요.</div>
+    <div class="grid2">
+      <div class="field"><label>금액 (원)</label>
+        <input type="number" inputmode="numeric" id="cp-amt" value="${p.amount||''}" placeholder="10000" oninput="cpRun()"></div>
+      <div class="field"><label>카테고리</label>
+        <select id="cp-cat" onchange="cpRun()">${EXP_CATS.map(([e,n])=>`<option value="${n}" ${(p.cat||'식비')===n?'selected':''}>${e} ${n}</option>`).join('')}</select></div>
+    </div>
+    <div class="field"><label>가맹점 (선택 — 영역 혜택 판정에 씁니다)</label>
+      <input id="cp-memo" value="${esc(p.memo||'')}" placeholder="예: 스타벅스, Claude, 카카오T" oninput="cpRun()"></div>
+    ${anyVia?`<label class="cb-row" style="margin-bottom:8px"><input type="checkbox" id="cp-via" ${cpVia?'checked':''} onchange="cpRun()"><span>온라인 간편결제로 결제</span></label>`:''}
+    <div id="cp-out"></div>`);
+  cpRun();
+}
+function cpRun(){
+  const el=$('cp-out'); if(!el)return;
+  const amount=Math.round(numVal('cp-amt'));
+  if(!(amount>0)){el.innerHTML=`<div class="empty">금액을 넣으면 카드별로 계산해드려요</div>`;return}
+  if(!S.cards.length){el.innerHTML=`<div class="empty">먼저 카드를 등록해주세요</div>`;return}
+  const rows=cardPick({amount,cat:val('cp-cat'),memo:val('cp-memo'),via:chkVal('cp-via')?'simple':''});
+  const best=rows[0], tie=rows.filter(r=>r.gain===best.gain).length===rows.length;
+  el.innerHTML=`${(best.gain>0&&!tie)?`<div class="card tight" style="background:var(--terra-soft);border-color:var(--terra-line);margin-bottom:10px">
+      <div class="tiny" style="font-weight:700;color:var(--terra-deep)">추천</div>
+      <div class="row" style="margin-top:3px"><b style="font-size:1rem">${esc(best.card.name)}</b>
+        <b class="num pos" style="font-size:1.05rem">+${fmt(best.gain)}</b></div>
+      ${cardPickReason(best)?`<div class="tiny" style="margin-top:4px">${cardPickReason(best)}</div>`:''}
+    </div>`:''}
+    ${(best.gain>0&&!tie&&rows.length>1)?`<div class="sec-title" style="margin:14px 2px 2px">다른 카드</div>`:''}
+    ${(best.gain>0&&!tie?rows.slice(1):rows).map((r,i,arr)=>`<div class="row" style="padding:10px 2px;${i<arr.length-1?'border-bottom:1px solid var(--line)':''};gap:10px;align-items:flex-start">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:.9rem;font-weight:600">${esc(r.card.name)}
+          <span class="tiny">${r.card.type==='credit'?'신용':'체크'}</span></div>
+        ${cardPickReason(r)?`<div class="tiny" style="margin-top:2px">${cardPickReason(r)}</div>`:'<div class="tiny" style="margin-top:2px">해당하는 혜택 없음</div>'}
+      </div>
+      <b class="num ${r.gain>0?'pos':''}" style="font-size:.92rem;white-space:nowrap">${r.gain>0?'+'+fmt(r.gain):'0원'}</b>
+    </div>`).join('')}
+    ${best.gain===0?`<div class="tiny" style="margin-top:10px">이 결제에 붙는 혜택이 없어요. 실적을 채워야 하는 카드가 있다면 그쪽으로 쓰는 것도 방법이에요.</div>`
+      :`<div class="tiny" style="margin-top:10px;color:var(--faint)">등록한 혜택 정보 기준 예상치예요. 실제 적립은 카드사 기준을 따릅니다.</div>`}`;
+}
+/* 내역 입력 중에도 '더 나은 카드'를 살짝 알려준다 */
+function txPickHint(){
+  const el=$('tx-pick-hint'); if(!el)return;
+  syncTxDraft();
+  const d=txDraft;
+  const amt=Math.round(+d.amount||0);
+  if(d.type!=='expense'||!(amt>0)||S.cards.length<2){el.innerHTML='';return}
+  const rows=cardPick({amount:amt,cat:d.cat,memo:d.memo,via:d.via||'',date:d.date});
+  if(!rows.length){el.innerHTML='';return}
+  const cur=rows.find(r=>r.card.id===d.payId);
+  const best=rows[0];
+  if(!best.gain){el.innerHTML='';return}
+  if(cur&&cur.card.id===best.card.id){
+    el.innerHTML=`<div class="tiny" style="margin-top:5px;color:var(--green)">✅ 이 결제엔 이 카드가 제일 나아요 (+${fmt(best.gain)})</div>`;
+    return;
+  }
+  const diff=best.gain-(cur?cur.gain:0);
+  el.innerHTML=diff>0
+    ? `<div class="tiny" style="margin-top:5px">💡 <b>${esc(best.card.name)}</b>로 쓰면 <b class="pos">+${fmt(diff)}</b> 더 받아요
+        <span class="link" onclick="openCardPickModal({amount:${amt},cat:'${esc(d.cat)}',memo:${JSON.stringify(d.memo||'').replace(/"/g,'&quot;')},via:${d.via==='simple'}})">비교</span></div>`
+    : '';
+}
+
+/* ── 연속 이용 스트릭 카드 ── */
+function renderStreak(){
+  const el=$('streak-card'); if(!el)return;
+  const items=[];
+  S.cards.forEach(c=>cardStreaks(c).forEach(s=>items.push({c,s})));
+  if(!items.length){el.style.display='none';el.innerHTML='';return}
+  el.style.display='';
+  const chip=s=>{
+    if(!s.active)return'<span class="badge gray">전월 실적 미달</span>';
+    if(s.state==='done')return'<span class="badge green">달성 ✓</span>';
+    if(s.state==='ready')return'<span class="badge gold">오늘 1건이면 달성</span>';
+    if(s.state==='partial')return`<span class="badge gold">${s.left}일 더</span>`;
+    if(s.state==='building')return`<span class="badge gray">${s.left}일 더</span>`;
+    return'<span class="badge gray">끊김</span>';
+  };
+  const line=s=>{
+    if(!s.active)return'전월 실적을 채우면 이 조건이 열려요.';
+    if(s.state==='done')return`연속 ${s.rToday}일 — 오늘 결제부터 ${s.p.kind==='percent'?s.p.boost+'%':fmtK(s.p.boost)+'원'}으로 올라가 있어요.`;
+    if(s.state==='ready')return`어제까지 ${s.rYst}일 연속. <b>오늘 한 건만</b> 쓰면 오늘부터 2배예요.`;
+    if(s.state==='partial')return`오늘까지 ${s.rToday}일 연속. ${s.left}일 더 이어가면 2배가 붙어요.`;
+    if(s.state==='building')return`어제까지 ${s.rYst}일 연속. 오늘 쓰고 ${s.left}일 더 이어가면 달성이에요.`;
+    return`연속이 끊겼어요. 오늘부터 ${s.N}일 이어가면 2배가 붙어요.`;
+  };
+  el.innerHTML=`<div class="row" style="margin-bottom:8px"><b style="font-size:.92rem">⚡ 연속 이용 조건</b>
+      <span class="tiny">${todayStr().slice(5).replace('-','/')} 기준</span></div>
+    ${items.map(({c,s},i)=>`<div style="padding:9px 0;${i<items.length-1?'border-bottom:1px solid var(--line)':''}">
+      <div class="row" style="gap:8px"><span style="font-size:.87rem;font-weight:600;min-width:0">${esc(c.name)} · ${esc(s.p.name)}</span>${chip(s)}</div>
+      <div class="tiny" style="margin-top:3px">${line(s)}</div>
+      <div style="display:flex;gap:3px;margin-top:6px">
+        ${Array.from({length:s.N},(_,k)=>{
+          const filled=(s.state==='done'||s.state==='partial')?k<s.rToday:(k<s.rYst);
+          const nextUp=(s.state==='ready'||s.state==='building')&&k===s.rYst;
+          return`<div style="flex:1;height:6px;border-radius:var(--r-full);background:${
+            filled?'var(--terra)':nextUp?'var(--gold)':'var(--fill-2)'}"></div>`}).join('')}
+      </div></div>`).join('')}`;
+}
+/* 홈 배너 — 오늘 움직이면 이득인 것만 */
+function renderStreakBanner(){
+  const el=$('streak-slot'); if(!el)return;
+  const a=streakActionable().filter(x=>x.s.state==='ready');
+  if(!a.length){el.innerHTML='';return}
+  const x=a[0];
+  el.innerHTML=`<div class="banner"><div class="b-main">⚡ <b>${esc(x.c.name)}</b> ${esc(x.s.p.name)} —
+      오늘 한 건만 쓰면 <b>${x.s.N}일 연속 달성</b>이에요${a.length>1?` (외 ${a.length-1}건)`:''}</div>
+    <button class="btn dark sm" onclick="switchView('cards')">보기</button></div>`;
+}
 function openPerkPreset(){
   syncCardDraft();
   openModal(`${sheetHead('혜택 묶음 불러오기')}
@@ -4222,7 +4532,9 @@ function renderFxChip(){
     const rd=f.rateDate||'', old=rd&&rd!==todayStr();
     const label=rd?(old?`${rd.slice(5).replace('-','/')} 기준`:'오늘 기준')
                   :(f.at?(stale?f.at:'오늘 갱신됨'):'미갱신');
-    el.innerHTML=`<span class="fx-chip" onclick="fetchFx()" style="cursor:pointer${old?';background:var(--gold-soft);color:var(--gold)':''}">💵 1$ = ${f.usdkrw.toLocaleString()}원 · ${label}${f.src?` · ${esc(f.src)}`:''} ⟳</span>`;
+    const st=fxStats(6), v=fxVerdict(st);
+    el.innerHTML=`<span class="fx-chip" onclick="fetchFx()" style="cursor:pointer${old?';background:var(--gold-soft);color:var(--gold)':''}">💵 1$ = ${f.usdkrw.toLocaleString()}원 · ${label}${f.src?` · ${esc(f.src)}`:''} ⟳</span>`
+      + (st.enough?`<span class="fx-chip" onclick="openFxModal()" style="cursor:pointer;margin-left:6px;background:var(--fill);color:var(--sub)">${v.emo} ${st.pct<=20?'낮은 편':st.pct>=80?'높은 편':'보통'}</span>`:'');
   }
 }
 function openFxModal(){
@@ -4237,6 +4549,18 @@ function openFxModal(){
     ${f.err?`<div class="card tight" style="background:var(--terra-soft);border-color:var(--terra-line);margin-bottom:12px">
       <div style="font-size:.84rem;font-weight:700;color:var(--terra-deep)">⚠️ 자동 갱신 실패 — ${esc(f.err)}</div>
       <div class="tiny" style="margin-top:5px;color:var(--sub)">저장된 HTML 파일을 직접 열면 브라우저 보안정책이 외부 요청을 막을 수 있어요. 아래에 직접 입력하면 모든 기능이 정상 동작합니다.</div></div>`:''}
+    ${(()=>{const st=fxStats(6), v=fxVerdict(st);
+      return `<div class="card tight" style="margin-bottom:12px">
+        <div class="row" style="margin-bottom:2px"><b style="font-size:.88rem">📊 환전 타이밍</b>
+          ${st.enough?`<span class="tiny num">${st.n}일 기록</span>`:''}</div>
+        <div class="tiny ${v.cls}" style="margin-top:3px">${v.emo} ${v.txt}</div>
+        ${fxSpark(st)}
+        ${st.enough?`<div class="row"><span class="tiny num">최저 ${st.lo.toLocaleString()}</span>
+          <span class="tiny num">평균 ${st.avg.toLocaleString()}</span>
+          <span class="tiny num">최고 ${st.hi.toLocaleString()}</span></div>
+          <div class="tiny" style="margin-top:6px;color:var(--faint)">점선이 지금 환율이에요. 과거 범위 안에서의 위치일 뿐, 앞으로의 방향을 뜻하진 않아요.</div>`
+          :`<div class="tiny" style="margin-top:6px;color:var(--faint)">매일 갱신될 때마다 쌓여요. 8일치가 모이면 판단을 시작해요.</div>`}
+      </div>`})()}
     <div class="field"><label>직접 입력 (1$ 당 원)</label>
       <input type="number" inputmode="decimal" step="any" id="fx-manual" value="${f.usdkrw}">
       <div class="tiny" style="margin-top:5px">네이버에 '환율' 검색하면 현재 시세를 볼 수 있어요.</div></div>
@@ -4601,14 +4925,15 @@ function renderPickRate(){
 function benchBar(rate){
   const marks=[[0.3,'낮음'],[0.7,'양호'],[1.2,'우수'],[2.0,'최상']];
   const pos=Math.min(100,Math.max(0,rate/2.5*100));
-  return`<div style="position:relative;height:34px">
+  return`<div style="position:relative;height:46px">
     <div style="height:9px;border-radius:99px;background:linear-gradient(90deg,#E8C4B8,#EBD9A8,#BFD3BF,#9DC3A5);margin-top:3px"></div>
     ${marks.map(([v,l])=>`<div style="position:absolute;left:${Math.min(100,v/2.5*100)}%;top:0">
       <div style="width:1px;height:15px;background:var(--line2);margin-left:-0.5px"></div>
       <div class="tiny" style="transform:translateX(-50%);white-space:nowrap;font-size:.62rem">${l}</div></div>`).join('')}
     <div style="position:absolute;left:${pos}%;top:-1px;transform:translateX(-50%)">
-      <div style="width:3px;height:17px;background:var(--ink);border-radius:2px"></div>
-      <div class="tiny num" style="transform:translateX(-50%);font-weight:800;font-size:.66rem;margin-left:1.5px">내 카드</div></div>
+      <div style="width:3px;height:17px;background:var(--ink);border-radius:2px"></div></div>
+    <div class="tiny num" style="position:absolute;top:19px;left:${pos}%;transform:translateX(-50%);
+      font-weight:800;font-size:.66rem;white-space:nowrap;background:var(--surface);padding:0 3px">내 카드</div>
   </div>`;
 }
 
@@ -5412,7 +5737,9 @@ function restoreVersion(id){
 autoApplyFixed();
 autoApplySaving();
 recordScore();
-touchNetHist(); store.save(S);      // 앱을 열기만 해도 그날의 순자산은 남긴다
+touchNetHist();
+fxRecord(fxRate());                 // 자동 갱신이 막혀도 하루 한 점은 남긴다
+store.save(S);                      // 앱을 열기만 해도 그날의 순자산·환율은 남는다
 txView=S.settings.txView||'cal'; cardView=S.settings.cardView||'manage';
 setTimeout(()=>{
   document.querySelectorAll('#tx-viewseg button').forEach(b=>b.classList.toggle('on',b.dataset.m===txView));
