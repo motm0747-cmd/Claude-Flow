@@ -839,7 +839,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20260902-flow';
+const APP_BUILD='20260904-flow2';
 const KEY='claudeflow_v1';
 const store={
   ok:(()=>{try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true}catch(e){return false}})(),
@@ -879,7 +879,11 @@ function migrate(){
   S.quickHide=S.quickHide||[];      // 빠른 입력에서 숨긴 항목(자동 추천 포함)
   S.askLog=S.askLog||[];            // AI 대화 기록
   S.flowAI=S.flowAI||null;          // 현금흐름 AI 진단 결과 {at, ym, text}
+  S.flowForecast=S.flowForecast||null; // 과거 패턴 기반 다음 달 예측 {at, months, text}
   S.notify=S.notify||{budget:true,card:true,fixed:true,inactive:true}; // 알림 종류
+  if(S.notify.streak===undefined)S.notify.streak=true;
+  if(S.notify.flowrisk===undefined)S.notify.flowrisk=true;
+  if(S.notify.invperiod===undefined)S.notify.invperiod=true;
   S.fixed.forEach(f=>{ if(!f.kind)f.kind='expense'; if(f.from===undefined)f.from=''; if(f.to===undefined)f.to=''; });
   S.cards.forEach(c=>{ if(c.annualFee===undefined)c.annualFee=0; });
   // 제거된 기능(문자 자동 기록·토스증권 연동)이 남긴 데이터 청소 — 동기화 용량만 차지한다
@@ -3739,6 +3743,43 @@ function cashflowPlan(days){
     monthsOfData:avg.n};
 }
 
+/* ── 과거 패턴 기반 예측용 자료 ──
+ * 위 cashflowPlan()은 '고정 항목'을 등록해야 정확해진다. 여기서는 그거 없이도
+ * 최근 실제 월별 수입·지출만으로 추세·변동성·반복 지출을 뽑는다 — AI 예측(아래
+ * flowForecast)이 고정수입·고정비 없이도 동작하게 하려는 목적. */
+function cashflowHistory(months){
+  const N=months||12, now=new Date(), rows=[];
+  for(let i=N;i>=1;i--){
+    const d=new Date(now.getFullYear(),now.getMonth()-i,1);
+    const ym=`${d.getFullYear()}-${pad(d.getMonth()+1)}`, t=totals(ym);
+    if(t.inc||t.exp)rows.push({ym,inc:Math.round(t.inc),exp:Math.round(t.exp),net:Math.round(t.inc-t.exp)});
+  }
+  if(rows.length<2)return{months:rows.length,rows,trendPct:0,volatility:0,irregular:[]};
+
+  // 추세: 최근 절반 대 이전 절반 평균 지출 비교
+  const half=Math.floor(rows.length/2);
+  const older=rows.slice(0,rows.length-half), newer=rows.slice(rows.length-half);
+  const avgExp=arr=>arr.length?arr.reduce((s,r)=>s+r.exp,0)/arr.length:0;
+  const oldAvg=avgExp(older);
+  const trendPct=oldAvg>0?Math.round((avgExp(newer)-oldAvg)/oldAvg*100):0;
+
+  // 변동성: 수입의 표준편차/평균 (프리랜서 등 비정기 수입 여부 판단용)
+  const incs=rows.map(r=>r.inc), incAvg=incs.reduce((s,v)=>s+v,0)/incs.length;
+  const variance=incs.reduce((s,v)=>s+(v-incAvg)**2,0)/incs.length;
+  const volatility=incAvg>0?Math.round(Math.sqrt(variance)/incAvg*100):0;
+
+  // 고정으로 등록 안 됐지만 여러 달에 걸쳐 반복되는 지출 카테고리(경조사비 등)
+  const catByYm={};
+  rows.forEach(r=>{ catSums(r.ym).forEach(([cat,amt])=>{ (catByYm[cat]=catByYm[cat]||[]).push(amt); }); });
+  const fixedCats=new Set((S.fixed||[]).map(f=>f.cat).filter(Boolean));
+  const irregular=Object.entries(catByYm)
+    .filter(([cat,arr])=>!fixedCats.has(cat)&&arr.length>=2&&arr.length<rows.length)
+    .map(([cat,arr])=>({cat,count:arr.length,avg:Math.round(arr.reduce((s,v)=>s+v,0)/arr.length)}))
+    .sort((a,b)=>b.avg*b.count-a.avg*a.count).slice(0,5);
+
+  return{months:rows.length,rows,trendPct,volatility,irregular};
+}
+
 /* ── 요약 카드 (리포트 최상단) ── */
 function renderFlowCard(){
   const el=$('flow-card'); if(!el)return;
@@ -3772,6 +3813,7 @@ function renderFlowCard(){
 function openFlowAI(){
   const p=cashflowPlan();
   const saved=S.flowAI;
+  const h0=cashflowHistory(), savedFc=S.flowForecast;
   const money=v=>(v>=0?'+':'−')+fmtK(Math.abs(v))+'원';
   const row=(label,v,color,sub)=>`<div class="row" style="padding:7px 0;gap:10px">
     <span style="font-size:.86rem;min-width:0">${color?`<span class="legend-dot" style="background:${color}"></span>`:''}${label}
@@ -3816,6 +3858,18 @@ function openFlowAI(){
         : `<div class="tiny">위 숫자를 바탕으로 지금 구조가 괜찮은지, 무엇부터 손대면 좋을지 짚어드려요.</div>`}</div>
       <button class="btn ${saved?'ghost':'primary'} block sm" style="margin-top:10px" id="flow-ai-btn"
         onclick="flowDiagnose()">${saved?'다시 진단받기':'AI 진단 받기'}</button>
+      ${!aiEnabled()?`<div class="tiny" style="margin-top:6px;color:var(--terra-deep)">설정에서 클라우드 로그인 또는 Gemini 키를 넣으면 쓸 수 있어요.</div>`:''}
+    </div>
+
+    <div class="card tight" style="margin-bottom:12px">
+      <div class="row" style="margin-bottom:6px"><b style="font-size:.9rem">🔮 다음 달 예측 (과거 패턴 기반)</b>
+        ${savedFc?`<span class="tiny">${esc(String(savedFc.at).slice(0,10))}</span>`:''}</div>
+      <div class="tiny" style="margin-bottom:8px">고정수입·고정비를 등록하지 않았어도, 최근 ${h0.months}개월 실제 수입·지출만으로 다음 달을 예상해요.</div>
+      <div id="flow-fc-out">${savedFc&&savedFc.text
+        ? fmtAI(savedFc.text)
+        : `<div class="tiny">${h0.months<2?'최근 기록이 2개월 이상 쌓이면 예측할 수 있어요.':'버튼을 누르면 과거 흐름으로 다음 달을 예상해드려요.'}</div>`}</div>
+      <button class="btn ${savedFc?'ghost':'primary'} block sm" style="margin-top:10px" id="flow-fc-btn" ${h0.months<2?'disabled':''}
+        onclick="flowForecast()">${savedFc?'다시 예측받기':'과거 패턴으로 예측하기'}</button>
       ${!aiEnabled()?`<div class="tiny" style="margin-top:6px;color:var(--terra-deep)">설정에서 클라우드 로그인 또는 Gemini 키를 넣으면 쓸 수 있어요.</div>`:''}
     </div>
 
@@ -3887,6 +3941,39 @@ async function flowDiagnose(){
     if(out)out.innerHTML=`<div class="tiny" style="color:var(--terra-deep)">진단하지 못했어요 — ${esc((e&&e.message)||'')}</div>`;
     if(btn)btn.textContent='다시 시도';
   }finally{ flowBusy=false; if(btn)btn.disabled=false; }
+}
+
+/* ── 과거 패턴 기반 예측 — 고정 항목이 하나도 없어도 동작 ── */
+const FORECAST_PERSONA=`너는 한국 사회초년생 전용 '현금흐름 예측가'야. 아래는 최근 실제 월별 수입·지출 데이터(앱이 계산한 정확한 숫자)야. 고정수입·고정비를 등록했는지와 상관없이, 이 과거 흐름만 근거로 다음 달을 예상해. 숫자를 지어내지 말고, 데이터가 부족하면 부족하다고 말해.`;
+const FORECAST_TASK=`다음을 순서대로 써:
+1) 다음 달 예상 수입·지출·순현금흐름 — 원 단위 범위로 (예: 수입 250~300만원). 어떤 과거 패턴을 근거로 그렇게 봤는지 반드시 밝혀.
+2) 눈에 띄는 패턴 — 수입이 불규칙한지, 지출이 늘고 있는지 줄고 있는지, 고정으로 등록 안 됐지만 반복되는 지출이 있는지.
+3) 다음 달 준비할 것 한 가지 — 위 예측을 근거로 구체적으로.`;
+let forecastBusy=false;
+async function flowForecast(){
+  if(forecastBusy)return;
+  if(!aiEnabled()){ toast('설정에서 클라우드 로그인 또는 Gemini 키를 넣어주세요'); return openSettings(); }
+  const h=cashflowHistory();
+  if(h.months<2){ toast('최근 2개월 이상의 기록이 있어야 예측할 수 있어요'); return; }
+  const out=$('flow-fc-out'), btn=$('flow-fc-btn');
+  forecastBusy=true; if(btn){btn.disabled=true;btn.textContent='분석 중…';}
+  if(out)out.innerHTML='<div class="tiny">과거 패턴을 읽고 있어요…</div>';
+  try{
+    const ctx={
+      최근개월수:h.months, 월별수입지출:h.rows,
+      지출추세:h.trendPct>0?`최근이 이전보다 ${h.trendPct}% 늘었어요`:h.trendPct<0?`최근이 이전보다 ${Math.abs(h.trendPct)}% 줄었어요`:'큰 변화 없어요',
+      수입변동성:h.volatility+'% (클수록 수입이 불규칙)',
+      고정등록안된반복지출:h.irregular.map(x=>({카테고리:x.cat,등장월수:x.count,평균금액:x.avg}))
+    };
+    const text=await gemini(`${FORECAST_PERSONA}\n\n${FORECAST_TASK}\n\n[과거 현금흐름 데이터]\n${JSON.stringify(ctx)}\n\n${AI_FORMAT}`);
+    S.flowForecast={at:new Date().toISOString(),months:h.months,text};
+    save();
+    if(out)out.innerHTML=fmtAI(text);
+    if(btn)btn.textContent='다시 예측받기';
+  }catch(e){
+    if(out)out.innerHTML=`<div class="tiny" style="color:var(--terra-deep)">예측하지 못했어요 — ${esc((e&&e.message)||'')}</div>`;
+    if(btn)btn.textContent='다시 시도';
+  }finally{ forecastBusy=false; if(btn)btn.disabled=false; }
 }
 /* 홈 배너 — 잔액이 바닥날 것으로 보일 때만 */
 function renderFlowBanner(){
@@ -4003,7 +4090,8 @@ function renderAlloc(){
       :drift.length?`<div class="divider"></div>${drift.map(r=>`<div class="tiny" style="padding:3px 0">
           ${r.move>0?'🔻':'🔺'} <b>${r.label}</b> 비중이 목표보다 ${Math.abs(r.gap).toFixed(0)}%p ${r.move>0?'낮아요':'높아요'} —
           <b class="num">${fmtK(Math.abs(r.move))}원</b>을 ${r.move>0?'이쪽으로 옮기면':'다른 곳으로 옮기면'} 맞아요.</div>`).join('')}
-        <div class="tiny" style="margin-top:6px;color:var(--faint)">5%p 이내 차이는 정상 범위로 보고 넘어가요.</div>`
+        <div class="tiny" style="margin-top:6px;color:var(--faint)">5%p 이내 차이는 정상 범위로 보고 넘어가요.</div>
+        <button class="btn ghost sm block" style="margin-top:8px" onclick="openAllocExecModal()">💰 수수료까지 계산한 실행 계획 보기</button>`
       :`<div class="divider"></div><div class="tiny">✅ 목표 배분에 잘 맞춰져 있어요.</div>`}`;
 }
 function openAllocModal(){
@@ -4031,6 +4119,87 @@ function saveAlloc(){
   ALLOC_GROUPS.forEach(x=>{v[x.k]=Math.max(0,Math.round(numVal('al-'+x.k)||0));sum+=v[x.k]});
   if(sum!==100)return toast(`합계가 ${sum}%예요 — 100%로 맞춰주세요`);
   S.alloc=v; commit('배분 목표를 저장했어요');
+}
+
+/* ═════════ 리밸런싱 실행 도우미 — 배분 갭 × 매매 수수료 ═════════
+ * '자산 배분' 카드는 얼마를 옮겨야 하는지까지만 알려준다. 여기서는 그 이동이
+ * 실제로 어느 투자 계좌를 사고팔아야 하는 일인지, 수수료가 얼마나 드는지 계산한다.
+ * 수수료가 낮은 계좌부터 채우고, 매도일 때는 절세계좌(중도인출 시 세제혜택
+ * 추징 우려)를 맨 뒤로 미룬다. 현금성↔안전자산 사이는 계좌 이체라 수수료가 없다. */
+function allocExecPlan(){
+  const {tot,g}=allocNow(), tgt=S.alloc;
+  if(!tgt||tot<=0)return null;
+  const rows=ALLOC_GROUPS.map(x=>{
+    const amt=g[x.k], pct=amt/tot*100, want=tgt[x.k];
+    return{...x,amt,pct,want,gap:want-pct,move:Math.round(tot*want/100-amt)};
+  });
+  const drift=rows.filter(r=>Math.abs(r.gap)>=5);
+  const legs=[]; let short=0, side=null;
+  const investRow=rows.find(r=>r.k==='invest');
+  if(investRow&&drift.some(r=>r.k==='invest')&&Math.abs(investRow.move)>0){
+    side=investRow.move>0?'buy':'sell';
+    let left=Math.abs(investRow.move);
+    const ranked=S.accounts.filter(a=>a.type==='invest').map(a=>{
+      const f=invFees(a), r=((side==='sell'?+f.sell:+f.buy)||0)+(+f.etc||0);
+      return{a,r};
+    }).sort((x,y)=>(side==='sell'?(invKindOf(x.a)==='tax')-(invKindOf(y.a)==='tax'):0)||x.r-y.r);
+    ranked.forEach(({a})=>{
+      if(left<=0)return;
+      const isFx=!!(a.cur&&a.cur!=='KRW'), rate=isFx?invFxRate(a).rate:1;
+      const availKrw=side==='sell'?accKRW(a):left;
+      const takeKrw=Math.min(left,availKrw);
+      if(takeKrw<=0)return;
+      const nativeAmt=isFx?Math.round(takeKrw/rate*100)/100:takeKrw;
+      const cost=tradeCost(a,nativeAmt,side);
+      const feeKrw=isFx?Math.round(cost.fee*rate):cost.fee;
+      let fxCostKrw=0;
+      if(isFx&&side==='buy'){
+        const fx=invFxRate(a);
+        if(fx.spread>0)fxCostKrw=Math.round(nativeAmt*fx.rate-nativeAmt*fx.base);
+      }
+      legs.push({a,side,krw:takeKrw,native:nativeAmt,isFx,feeKrw,fxCostKrw,
+                 pct:cost.pct,isTax:invKindOf(a)==='tax',expired:cost.st.state==='expired'});
+      left-=takeKrw;
+    });
+    short=left;
+  }
+  return{tot,rows,drift,legs,side,short,feeTotal:legs.reduce((s,l)=>s+l.feeKrw+l.fxCostKrw,0)};
+}
+function openAllocExecModal(){
+  if(!S.alloc){ toast('먼저 배분 목표를 정해주세요'); return; }
+  const p=allocExecPlan();
+  if(!p||!p.drift.length){ toast('지금은 5%p 이상 벗어난 게 없어요'); return; }
+  const adjLine=r=>{
+    if(Math.abs(r.gap)<5)return'';
+    return`<div class="row" style="padding:6px 0">
+      <span style="font-size:.86rem">${r.emo} ${r.label}</span>
+      <b class="num" style="font-size:.88rem;color:${r.move>0?'var(--green)':'var(--terra-deep)'}">${r.move>0?'+':'−'}${fmt(Math.abs(r.move))}</b></div>`;
+  };
+  const legRows=p.legs.map(l=>{
+    const warn=[];
+    if(l.isTax)warn.push('⚠️ 절세계좌예요 — 중도 인출하면 세액공제 추징 등 불이익이 있을 수 있어요.');
+    if(l.expired)warn.push('⏰ 수수료 우대 기간이 지나 설정된 값 그대로 계산했어요 — 실제와 다를 수 있어요.');
+    return`<div class="card tight" style="margin-bottom:8px">
+      <div class="row"><b style="font-size:.87rem">${esc(l.a.name)}</b>
+        <span class="badge ${l.side==='buy'?'green':'gold'}">${l.side==='buy'?'매수':'매도'}</span></div>
+      <div class="tiny num" style="margin-top:2px">${fmt(l.krw)}${l.isFx?` · ${esc((CURS[l.a.cur]||{}).sym||'')}${l.native.toLocaleString(undefined,{minimumFractionDigits:2})}`:''}</div>
+      <div class="row" style="margin-top:6px"><span class="tiny">수수료 <span style="color:var(--faint)">(${l.pct.toFixed(3)}%)</span></span>
+        <b class="num tiny">${fmt(l.feeKrw)}${l.fxCostKrw?` + 환전비용 ${fmt(l.fxCostKrw)}`:''}</b></div>
+      ${warn.map(w=>`<div class="tiny" style="color:var(--terra-deep);margin-top:4px">${w}</div>`).join('')}
+    </div>`;
+  }).join('');
+  const totalMove=p.legs.reduce((s,l)=>s+l.krw,0);
+  const feePct=totalMove>0?p.feeTotal/totalMove*100:0;
+  openModal(`${sheetHead('리밸런싱 실행 계획')}
+    <div class="tiny" style="margin:-4px 2px 12px">목표와 5%p 이상 벗어난 만큼만 계산해요. 투자 계좌는 수수료가 낮은 곳부터 채우고, 매도는 절세계좌를 맨 뒤로 미뤄요.</div>
+    <div class="card tight" style="margin-bottom:12px">${p.rows.map(adjLine).join('')}</div>
+    ${legRows||`<div class="tiny" style="margin-bottom:12px">현금성·안전자산 사이는 계좌 이체만 하면 돼요 — 수수료가 없어요.</div>`}
+    ${p.short>0?`<div class="tiny" style="color:var(--terra-deep);margin-bottom:12px">⚠️ ${p.side==='sell'?`매도할 수 있는 투자 잔액이 ${fmt(p.short)} 부족해요 — 목표만큼 못 줄일 수 있어요.`:`투자 계좌가 없어서 ${fmt(p.short)}을 어디에 넣을지 계산할 수 없어요 — 투자 계좌를 먼저 추가해보세요.`}</div>`:''}
+    ${p.legs.length?`<div class="row" style="padding:8px 0;border-top:1px solid var(--line)">
+      <b style="font-size:.88rem">수수료 합계</b>
+      <b class="num" style="font-size:.92rem;color:var(--terra-deep)">${fmt(p.feeTotal)} <span class="tiny">(움직이는 금액의 ${feePct.toFixed(3)}%)</span></b></div>
+      ${feePct>=1?`<div class="tiny" style="margin-top:6px">💡 수수료가 이동 금액의 ${feePct.toFixed(1)}%나 돼요 — 급하지 않다면 다음 기회에 모아서 하는 게 나을 수 있어요.</div>`:''}`:''}
+    <div class="tiny" style="margin-top:10px;color:var(--faint)">설정한 수수료율 기준 추정이에요. 실제 체결가·환율에 따라 달라질 수 있어요.</div>`);
 }
 
 /* ═════════ 목표 역산 ═════════
@@ -5559,6 +5728,9 @@ function renderNotifySection(){
     ${row('budget','예산 경고','이번 달 예산의 80%를 넘겼을 때')}
     ${row('card','카드 실적','실적 마감이 가까운데 미달일 때')}
     ${row('inactive','기록 리마인드','3일 이상 기록이 없을 때')}
+    ${row('streak','연속 이용 임박','오늘 한 번만 더 쓰면 2배 적립 조건을 채울 때')}
+    ${row('flowrisk','현금흐름 위험','앞으로 45일 안에 입출금 잔액이 마이너스가 될 것 같을 때')}
+    ${row('invperiod','투자 기간 만료','수수료·환전 우대 기간이 7일 안에 끝날 때')}
     <div class="tiny" style="margin-top:6px">서버가 아침에 확인해서 필요한 것만 보내요.</div></div>`;
 }
 function setNotify(k,v){ S.notify=S.notify||{}; S.notify[k]=v; save(); toast(v?'알림을 켰어요':'알림을 껐어요'); }

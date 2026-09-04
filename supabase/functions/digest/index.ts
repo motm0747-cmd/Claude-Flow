@@ -46,6 +46,198 @@ function daysBetween(a: string, b: string): number {
 
 type Item = { emo: string; title: string; detail: string; kind: string };
 
+/* ══════════════════════════════════════════════════════════════════
+   신호 3종 추가 — 스트릭 임박 · 현금흐름 위험 · 투자 기간 만료.
+   전부 앱(index.html)의 계산 로직을 그대로 옮긴 것이다. 카드 결제 금액만
+   예외: 청구할인(perkEstimates 전체)까지 옮기면 너무 커져서, 할인을 뺀
+   '미결제 총액(gross)'을 그대로 쓴다 — 실제보다 살짝 많게 잡히는 쪽이라
+   위험을 놓치는 것보다 안전하다.
+   ══════════════════════════════════════════════════════════════════ */
+const pnorm = (x: unknown) => String(x || "").replace(/\s+/g, "").toLowerCase();
+function perkMerchantsTs(p: any): string[] {
+  return String(p?.merchants || "").split(/[,·|]/).map(pnorm).filter(Boolean);
+}
+function perkMatchTs(p: any, t: any): boolean {
+  if ((+t.amount || 0) < (+p.minAmt || 0)) return false;
+  if (p.via === "simple" && (t.via || "") !== "simple") return false;
+  if (p.via === "normal" && (t.via || "") === "simple") return false;
+  const ms = perkMerchantsTs(p);
+  if (ms.length) { const m = pnorm(t.memo); return ms.some((k) => m.includes(k)); }
+  return p.cat === "전체" || t.cat === p.cat;
+}
+function perfSpendTs(tx: any[], card: any, ym: string): number {
+  let s = 0;
+  for (const t of tx) {
+    if (t?.type !== "expense" || t.payKind !== "card" || t.payId !== card.id) continue;
+    if (t.date?.slice(0, 7) !== ym) continue;
+    if (t.noPerf) continue;
+    if (Array.isArray(card.exclCats) && card.exclCats.includes(t.cat)) continue;
+    s += (+t.amount || 0);
+  }
+  return s;
+}
+const achievedTierByTs = (amt: number, tiers: number[]) => tiers.filter((t) => amt >= t).length;
+function addDaysTs(d: string, n: number): string {
+  const t = new Date(d + "T00:00:00"); t.setDate(t.getDate() + n);
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+}
+function prevYmTs(ym: string): string {
+  const [y, m] = ym.split("-").map(Number);
+  const d = new Date(y, m - 2, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/* 1) 연속 이용 스트릭 — '오늘 한 번만 더 쓰면 2배' 인 것만 (실행형) */
+function streakReadyItems(tx: any[], cards: any[], today: string, ym: string): Item[] {
+  const out: Item[] = [];
+  const yst = addDaysTs(today, -1);
+  for (const c of cards) {
+    if (!c || c.type !== "credit") continue;
+    const tiers: number[] = Array.isArray(c.tiers) ? c.tiers.map((x: any) => +x) : [];
+    const activeTier = tiers.length ? achievedTierByTs(perfSpendTs(tx, c, prevYmTs(ym)), tiers) : Infinity;
+    for (const p of (c.perks || [])) {
+      if (!((+p.boost || 0) > 0 && (+p.streakDays || 0) > 1)) continue;
+      const need = p.tier === undefined ? 1 : p.tier;
+      const active = need === 0 ? true : (tiers.length ? activeTier >= need : true);
+      if (!active) continue;
+      const dates = new Set(
+        tx.filter((t) => t?.type === "expense" && t.payKind === "card" && t.payId === c.id && perkMatchTs(p, t)).map((t) => t.date),
+      );
+      const runTo = (end: string) => { let n = 0, cur = end; while (dates.has(cur)) { n++; cur = addDaysTs(cur, -1); } return n; };
+      const rToday = runTo(today), rYst = runTo(yst), N = p.streakDays;
+      if (rToday >= N) continue;          // 오늘 결제분 이미 2배 — 알릴 필요 없음
+      if (rYst >= N - 1) {
+        out.push({
+          emo: "⚡", title: `${c.name || "카드"} 연속 ${N}일 달성 임박`,
+          detail: `오늘 ${p.name || "이 영역"}에서 한 번만 더 쓰면 2배예요`, kind: "streak",
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/* 2) 현금흐름 위험 — 앞으로 45일 안에 입출금 잔액이 마이너스가 될지 (실행형) */
+function toKrwTs(amt: number, cur: string, rate?: number): number {
+  return cur === "USD" ? Math.round(amt * (rate || 1380)) : Math.round(amt || 0);
+}
+function accKrwTs(a: any): number { return toKrwTs(+a?.balance || 0, a?.cur || "KRW"); }
+function recentAvgTs(tx: any[], today: string): { inc: number; exp: number } {
+  const Y = +today.slice(0, 4), M = +today.slice(5, 7);
+  let inc = 0, exp = 0, n = 0;
+  for (let i = 1; i <= 6; i++) {
+    const d = new Date(Y, M - 1 - i, 1);
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    let mi = 0, me = 0;
+    for (const t of tx) {
+      if (t?.date?.slice(0, 7) !== ym) continue;
+      if (t.type === "income") mi += (+t.amount || 0); else if (t.type === "expense") me += (+t.amount || 0);
+    }
+    if (mi > 0 || me > 0) { inc += mi; exp += me; n++; }
+  }
+  return n ? { inc: Math.round(inc / n), exp: Math.round(exp / n) } : { inc: 0, exp: 0 };
+}
+function recentInvestPaceTs(invLogs: any[]): number {
+  const byM: Record<string, number> = {};
+  for (const l of (invLogs || [])) {
+    const ym = String(l?.date || "").slice(0, 7); if (!ym) continue;
+    byM[ym] = (byM[ym] || 0) + toKrwTs(+l.amount || 0, l.cur, l.fxAt);
+  }
+  const ms = Object.keys(byM).sort().slice(-3);
+  return ms.length ? Math.round(ms.reduce((s, m) => s + byM[m], 0) / ms.length) : 0;
+}
+function monthDiffTs(a: string, b: string): number {
+  const [y1, m1] = a.split("-").map(Number), [y2, m2] = b.split("-").map(Number);
+  return (y2 - y1) * 12 + (m2 - m1);
+}
+function portionAmtTs(t: any, k: number): number {
+  const n = t.months || 1, base = Math.floor((+t.amount || 0) / n);
+  return k === n - 1 ? (+t.amount || 0) - base * (n - 1) : base;
+}
+function creditPendingGrossTs(tx: any[], cardId: string, todayYm: string): number {
+  let s = 0;
+  for (const t of tx) {
+    if (t?.type !== "expense" || t.payKind !== "card" || t.payId !== cardId) continue;
+    const n = t.months || 1;
+    const due = Math.max(0, Math.min(n, monthDiffTs(String(t.date).slice(0, 7), todayYm) + 1));
+    const paid = t.paidPortions || 0;
+    for (let k = paid; k < due; k++) s += portionAmtTs(t, k);
+  }
+  return s;
+}
+function cardMonthSpendTs(tx: any[], cardId: string, ym: string): number {
+  let s = 0;
+  for (const t of tx) if (t?.type === "expense" && t.payKind === "card" && t.payId === cardId && t.date?.slice(0, 7) === ym) s += (+t.amount || 0);
+  return s;
+}
+function cashflowRiskItem(data: any, today: string, ym: string): Item | null {
+  const tx: any[] = Array.isArray(data?.tx) ? data.tx : [];
+  const fixedAll = (Array.isArray(data?.fixed) ? data.fixed : []).filter((f: any) => f?.active !== false);
+  const incF = fixedAll.filter((f: any) => (f.kind || "expense") === "income");
+  const expF = fixedAll.filter((f: any) => (f.kind || "expense") !== "income");
+  const accounts: any[] = Array.isArray(data?.accounts) ? data.accounts : [];
+  const cards: any[] = Array.isArray(data?.cards) ? data.cards : [];
+  const forced = accounts.filter((a) => (a.type === "saving" || a.type === "housing") && (+a.monthly || 0) > 0 && (!a.maturity || a.maturity >= today));
+  const dca = recentInvestPaceTs(Array.isArray(data?.invLogs) ? data.invLogs : []);
+  const avg = recentAvgTs(tx, today);
+  const expFixed = expF.reduce((s: number, f: any) => s + (+f.amount || 0), 0);
+  const variable = Math.max(0, Math.round(avg.exp - expFixed));
+  const dayVar = Math.round(variable / 30.44);
+  const checking = accounts.filter((a) => a.type === "checking");
+  let bal = checking.reduce((s, a) => s + accKrwTs(a), 0);
+  const seen: Record<string, number> = {};
+  for (let i = 0; i <= 45; i++) {
+    const d = addDaysTs(today, i), dom = +d.slice(8, 10);
+    if (i > 0) {
+      for (const f of incF) if (+f.day === dom) bal += (+f.amount || 0);
+      for (const f of expF) if (+f.day === dom && f.payKind !== "card") bal -= (+f.amount || 0);
+      for (const a of forced) if (+a.payDay === dom) bal -= (+a.monthly || 0);
+      for (const c of cards) {
+        if (c?.type !== "credit" || !(+c.payDay > 0) || +c.payDay !== dom) continue;
+        seen[c.id] = (seen[c.id] || 0) + 1;
+        const amt = seen[c.id] === 1 ? Math.round(creditPendingGrossTs(tx, c.id, ym)) : Math.round(cardMonthSpendTs(tx, c.id, ym));
+        if (amt > 0) bal -= amt;
+      }
+      bal -= dayVar;
+    }
+    if (bal < 0) {
+      return {
+        emo: "⚠️", title: "현금흐름 위험",
+        detail: `${d.slice(5).replace("-", "/")}쯤 입출금 잔액이 ${won(-bal)} 모자랄 수 있어요`, kind: "flowrisk",
+      };
+    }
+  }
+  return null;
+}
+
+/* 3) 투자 계좌 수수료·환전 우대 기간 만료 — 7일 이내로 임박한 것만 (실행형) */
+function periodStateTs(today: string, from?: string, to?: string): { state: string; days?: number } {
+  if (!from && !to) return { state: "none" };
+  if (from && today < from) return { state: "before", days: daysBetween(today, from) };
+  if (to && today > to) return { state: "expired", days: daysBetween(to, today) };
+  return { state: "active", days: to ? daysBetween(today, to) : undefined };
+}
+function invPeriodItems(data: any, today: string): Item[] {
+  const out: Item[] = [];
+  const accounts: any[] = Array.isArray(data?.accounts) ? data.accounts : [];
+  for (const a of accounts) {
+    if (a?.type !== "invest") continue;
+    const f = a.fees || {}, x = a.fxPref || {};
+    const checks: [boolean, { state: string; days?: number }, string][] = [
+      [!!(+f.buy || +f.sell || +f.etc), periodStateTs(today, f.from, f.to), "수수료 우대"],
+      [!!(+x.pref || +x.spread), periodStateTs(today, x.from, x.to), "환전 우대"],
+    ];
+    for (const [has, st, label] of checks) {
+      if (!has || st.state !== "active" || st.days == null || st.days > 7) continue;
+      out.push({
+        emo: "⏰", title: `${a.name || "투자 계좌"} ${label} D-${st.days}`,
+        detail: `${st.days}일 뒤 기간이 끝나요 — 계속 쓰려면 계좌에서 다시 설정하세요`, kind: "invperiod",
+      });
+    }
+  }
+  return out;
+}
+
 function computeDigest(data: any) {
   const today = kstToday();
   const Y = +today.slice(0, 4), M = +today.slice(5, 7), D = +today.slice(8, 10);
@@ -118,6 +310,16 @@ function computeDigest(data: any) {
       }
     }
   }
+
+  // 6) 카드 연속결제 스트릭 임박 — 실행형
+  items.push(...streakReadyItems(tx, Array.isArray(data?.cards) ? data.cards : [], today, ym));
+
+  // 7) 현금흐름 위험(45일 안에 마이너스 예상) — 실행형
+  const flowItem = cashflowRiskItem(data, today, ym);
+  if (flowItem) items.push(flowItem);
+
+  // 8) 투자 계좌 수수료·환전 우대 기간 만료 임박(7일 이내) — 실행형
+  items.push(...invPeriodItems(data, today));
 
   return { date: today, items, computedAt: new Date().toISOString() };
 }
