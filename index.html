@@ -643,45 +643,59 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
   <!-- ─────────── 홈 ─────────── -->
   <div class="view on" id="view-home">
-    <div id="storage-banner"></div>
-    <div id="sync-banner"></div>
-    <div id="digest-slot"></div>
-    <div id="streak-slot"></div>
-    <div id="flow-slot"></div>
-    <div id="brief-slot"></div>
-    <div id="report-banner"></div>
-    <div id="dca-banner"></div>
-    <div id="perf-banner"></div>
-    <div id="warn-slot"></div>
-
+    <!-- ① 지금 형편 -->
     <div class="card hero">
       <div class="row">
         <div>
-          <div class="label">순자산</div>
-          <div class="amount num" id="h-net">0원</div>
-          <div class="tiny" id="h-net-sub"></div>
+          <div class="label" id="h-lead-label">쓸 수 있는 돈</div>
+          <div class="amount num" id="h-lead">0원</div>
+          <div class="tiny" id="h-lead-sub"></div>
         </div>
         <div class="score-chip" onclick="switchView('report')" id="h-score-chip"></div>
       </div>
       <div class="hero-grid">
+        <div class="cell" onclick="switchView('assets')" style="cursor:pointer">
+          <div class="k" id="h-c1-k">순자산</div><div class="v num" id="h-c1-v">0</div></div>
         <div class="cell"><div class="k">이번 달 수입</div><div class="v num pos" id="h-inc">0</div></div>
         <div class="cell"><div class="k">이번 달 지출</div><div class="v num neg" id="h-exp">0</div></div>
-        <div class="cell"><div class="k">수지</div><div class="v num" id="h-bal">0</div></div>
       </div>
+      <button class="btn ghost sm block" style="margin-top:11px" id="h-lead-btn" onclick="openSafeModal()">계산 근거 보기</button>
     </div>
 
-    <div class="card tight" id="quick-card"></div>
+    <!-- ② 지금 해야 할 일 -->
+    <div class="sec-title">지금 해야 할 일 <span id="todo-count"></span></div>
+    <div id="todo-zone">
+      <div id="storage-banner"></div>
+      <div id="sync-banner"></div>
+      <div id="digest-slot"></div>
+      <div id="flow-slot"></div>
+      <div id="warn-slot"></div>
+      <div class="card tight" id="anomaly-card"></div>
+      <div id="streak-slot"></div>
+      <div id="dca-banner"></div>
+      <div id="perf-banner"></div>
+      <div id="report-banner"></div>
+      <div id="brief-slot"></div>
+    </div>
+    <div id="todo-empty"></div>
+
+    <!-- ③ 이번 달 흐름 -->
+    <div class="sec-title">이번 달 흐름</div>
     <div class="card tight" id="budget-card"></div>
-    <div class="card tight" id="anomaly-card"></div>
     <div class="card tight" id="smart-gauge"></div>
     <div class="card tight" id="forecast-card"></div>
-    <div class="card tight" id="weekly-card"></div>
 
-    <div class="sec-title">위시리스트 <span class="link" onclick="openWishModal()">+ 담기</span></div>
-    <div class="card tight" id="wish-card"></div>
-
-    <div class="sec-title">최근 내역 <span class="link" onclick="switchView('cal')">전체 보기</span></div>
+    <div class="sec-title">기록 <span class="link" onclick="switchView('cal')">전체 보기</span></div>
+    <div class="card tight" id="quick-card"></div>
     <div class="card tight" id="recent-tx"></div>
+
+    <div class="sec-title" style="cursor:pointer" onclick="toggleHomeMore()">
+      <span id="more-label">더 보기</span><span class="link" id="more-caret">▾</span></div>
+    <div id="home-more" style="display:none">
+      <div class="card tight" id="weekly-card"></div>
+      <div class="sec-title">위시리스트 <span class="link" onclick="openWishModal()">+ 담기</span></div>
+      <div class="card tight" id="wish-card"></div>
+    </div>
   </div>
 
   <!-- ─────────── 캘린더 ─────────── -->
@@ -839,7 +853,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20260904-flow2';
+const APP_BUILD='20260904-home';
 const KEY='claudeflow_v1';
 const store={
   ok:(()=>{try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true}catch(e){return false}})(),
@@ -867,6 +881,8 @@ function migrate(){
   S.settings=S.settings||{gemini:''};
   S.goals=S.goals||[]; S.weekly=S.weekly||null;
   if(S.settings.dcaM===undefined)S.settings.dcaM=0;
+  if(S.settings.buffer===undefined)S.settings.buffer=0;    // 통장에 남겨둘 돈(쓸 수 있는 돈에서 제외)
+  if(S.settings.homeMore===undefined)S.settings.homeMore=false; // 홈 '더 보기' 펼침 여부
   if(S.settings.simReturn===undefined)S.settings.simReturn=6;
   if(S.settings.simExtra===undefined)S.settings.simExtra=0;
   if(S.settings.simHorizon===undefined)S.settings.simHorizon=12;
@@ -1355,21 +1371,128 @@ function scoreRing(score,size=34){
   </svg>`;
 }
 
-/* ═════════ 홈 ═════════ */
+/* ═════════ 쓸 수 있는 돈 ═════════
+ * 순자산은 "얼마나 모았나"에는 답하지만 "오늘 이거 사도 되나"에는 답하지 못한다.
+ * 그래서 다음 급여일까지 반드시 나갈 돈(고정비·자동이체·카드 결제)을 먼저 빼고,
+ * 남는 것만 '써도 되는 돈'으로 본다. 추정이 섞이는 값이라 계산 과정을 그대로
+ * 펼쳐 볼 수 있게 만들었다(카드의 '계산 근거' 버튼). */
+function nextIncomeDate(){
+  const today=todayStr();
+  const inc=(S.fixed||[]).filter(f=>(f.kind||'expense')==='income'&&f.active!==false&&+f.day>0);
+  const monthEnd=()=>{const ym=thisYM();return{date:`${ym}-${pad(daysIn(ym))}`,name:'이달 말',kind:'monthend'}};
+  if(!inc.length)return monthEnd();
+  // 가장 큰 고정수입을 '급여'로 본다 (작은 부수입에 지평이 끌려가지 않게)
+  const main=inc.slice().sort((a,b)=>(+b.amount||0)-(+a.amount||0))[0];
+  for(let i=1;i<=62;i++){
+    const d=addDays(today,i), ym=d.slice(0,7);
+    // 31일 급여인데 그 달이 30일까지면 말일로 본다
+    const day=Math.min(+main.day,daysIn(ym));
+    if(+d.slice(8,10)===day&&fixedActiveOn(main,ym))
+      return{date:d,name:main.name||'수입',kind:'income',amount:+main.amount||0};
+  }
+  return monthEnd();
+}
+function safeSpend(){
+  const today=todayStr(), hz=nextIncomeDate();
+  const days=Math.max(1,dayGap(today,hz.date));
+  const checking=S.accounts.filter(a=>a.type==='checking');
+  if(!checking.length)return{ok:false,why:'no-checking',hz,days};
+
+  const start=checking.reduce((s,a)=>s+accKRW(a),0);
+  const fxAll=(S.fixed||[]).filter(f=>f.active!==false);
+  const forced=S.accounts.filter(a=>(a.type==='saving'||a.type==='housing')
+    &&(+a.monthly||0)>0&&(!a.maturity||a.maturity>=today));
+  const items=[]; const seen={}; let plus=0, minus=0;
+  for(let i=1;i<=days;i++){
+    const d=addDays(today,i), ym=d.slice(0,7), dom=+d.slice(8,10);
+    const isHz=(d===hz.date);
+    fxAll.forEach(f=>{
+      if(+f.day!==dom||!fixedActiveOn(f,ym))return;
+      if((f.kind||'expense')==='income'){
+        // 지평 당일 들어오는 돈은 '다음 기간'의 돈이라 여기 넣지 않는다
+        if(isHz)return;
+        plus+=+f.amount||0; items.push({d,n:f.name||'수입',v:+f.amount||0,t:'in'});
+      }else if(f.payKind!=='card'){   // 카드로 내는 고정비는 카드 결제일에 한꺼번에
+        minus+=+f.amount||0; items.push({d,n:f.name||'고정비',v:+f.amount||0,t:'fixed'});
+      }
+    });
+    forced.forEach(a=>{ if(+a.payDay===dom){
+      minus+=+a.monthly||0; items.push({d,n:a.name||'적금',v:+a.monthly||0,t:'save'}); } });
+    S.cards.filter(c=>c.type==='credit'&&+c.payDay>0).forEach(c=>{
+      if(+c.payDay!==dom)return;
+      seen[c.id]=(seen[c.id]||0)+1;
+      // 첫 결제일은 실제 미결제액, 그 뒤는 이번 달 사용 페이스로 추정
+      const amt=seen[c.id]===1?Math.round(creditPendingNet(c)):Math.round(cardMonthSpend(c.id,thisYM()));
+      if(amt>0){minus+=amt; items.push({d,n:c.name||'카드',v:amt,t:'card',est:seen[c.id]>1})}
+    });
+  }
+  const buffer=Math.max(0,Math.round(+(S.settings||{}).buffer||0));
+  const usable=Math.round(start+plus-minus-buffer);
+  const bp=budgetPace(thisYM());
+  return{ok:true,hz,days,start,plus,minus,buffer,usable,
+    perDay:Math.floor(Math.max(0,usable)/days),
+    items:items.sort((a,b)=>a.d.localeCompare(b.d)),
+    budgetLeft:bp?Math.round(bp.total-bp.spent):null};
+}
+const mdLabel=d=>d.slice(5).replace('-','/');
+function openSafeModal(){
+  const s=safeSpend();
+  // 입출금 계좌가 있어야 계산이 된다 — 이유를 말해주고 바로 만들 수 있게
+  if(!s.ok){ toast('입출금 계좌를 등록하면 계산해드려요'); return openAccModal(); }
+  const line=(label,v,sign,sub)=>`<div class="row" style="padding:7px 0;gap:10px">
+    <span style="font-size:.86rem;min-width:0">${label}${sub?`<br><span class="tiny">${sub}</span>`:''}</span>
+    <b class="num" style="font-size:.9rem;white-space:nowrap;${sign==='-'?'color:var(--terra-deep)':sign==='+'?'color:var(--green)':''}">${sign||''}${fmt(Math.abs(v))}</b></div>`;
+  const emo={in:'💰',fixed:'📌',save:'🔒',card:'💳'};
+  const nFixed=s.items.filter(x=>x.t==='fixed').length;
+  const nSave=s.items.filter(x=>x.t==='save').length;
+  const cardSum=s.items.filter(x=>x.t==='card').reduce((a,b)=>a+b.v,0);
+  const fixedSum=s.items.filter(x=>x.t==='fixed').reduce((a,b)=>a+b.v,0);
+  const saveSum=s.items.filter(x=>x.t==='save').reduce((a,b)=>a+b.v,0);
+  openModal(`${sheetHead('쓸 수 있는 돈')}
+    <div class="tiny" style="margin:-4px 2px 12px">${esc(s.hz.kind==='income'?`${esc(s.hz.name)}(${mdLabel(s.hz.date)})까지`:'이달 말까지')} 반드시 나갈 돈을 먼저 빼고 남는 금액이에요. 앞으로 <b>${s.days}일</b>.</div>
+
+    <div class="card tight" style="margin-bottom:12px">
+      ${line('입출금 잔액',s.start,'','지금 통장에 있는 돈')}
+      ${s.plus?line('그 사이 들어올 돈',s.plus,'+'):''}
+      ${fixedSum?line('고정비',fixedSum,'−',`${nFixed}건`):''}
+      ${saveSum?line('적금·청약 자동이체',saveSum,'−',`${nSave}건`):''}
+      ${cardSum?line('카드 결제 예정',cardSum,'−',s.items.some(x=>x.t==='card'&&x.est)?'두 번째 결제일부터는 이번 달 사용 페이스로 추정':''):''}
+      ${s.buffer?line('남겨둘 돈',s.buffer,'−','비상용으로 건드리지 않을 금액'):''}
+      <div class="divider"></div>
+      <div class="row"><b style="font-size:.9rem">쓸 수 있는 돈</b>
+        <b class="num" style="font-size:1.15rem;color:${s.usable>=0?'var(--green)':'var(--terra-deep)'}">${fmt(s.usable)}</b></div>
+      <div class="tiny" style="margin-top:4px">${s.usable<0
+        ? `${s.days}일 동안 <b>${fmt(-s.usable)}</b>이 모자라요 — 지출을 미루거나 다른 계좌에서 옮겨와야 해요`
+        : `하루 ${fmt(s.perDay)} 꼴 · ${s.days}일 남음`}</div>
+    </div>
+
+    ${s.budgetLeft!=null?`<div class="tiny" style="margin-bottom:12px">🎯 이번 달 예산 기준으로는 <b class="num">${fmt(s.budgetLeft)}</b> 남았어요${s.budgetLeft<s.usable?' — 통장보다 예산이 더 빡빡해요.':''}</div>`:''}
+
+    ${s.items.length?`<div class="sec-title" style="margin-top:0">앞으로 나갈 돈</div>
+      <div class="card tight" style="margin-bottom:12px">${s.items.slice(0,10).map(e=>`
+        <div class="row" style="padding:4px 0;gap:8px">
+          <span class="tiny">${emo[e.t]||'•'} ${esc(mdLabel(e.d))} ${esc(e.n)}${e.est?' <span style="color:var(--faint)">(추정)</span>':''}</span>
+          <span class="tiny num ${e.t==='in'?'pos':''}">${e.t==='in'?'+':'−'}${fmtK(e.v)}</span></div>`).join('')}
+        ${s.items.length>10?`<div class="tiny" style="margin-top:6px">외 ${s.items.length-10}건</div>`:''}</div>`:''}
+
+    <div class="field"><label>남겨둘 돈 (원)</label>
+      <input type="number" inputmode="numeric" id="sf-buf" value="${s.buffer||''}" placeholder="0">
+      <div class="tiny" style="margin-top:5px">💡 통장에 항상 남겨두고 싶은 금액이에요. 여기 넣으면 '쓸 수 있는 돈'에서 미리 빠져요.</div></div>
+    <button class="btn primary block" onclick="saveBuffer()">저장</button>`);
+}
+function saveBuffer(){
+  S.settings.buffer=Math.max(0,Math.round(numVal('sf-buf')||0));
+  commit('저장했어요');
+}
+
+/* ═════════ 홈 ═════════
+ * 세 층으로 읽는다.
+ *   ① 지금 형편  — 쓸 수 있는 돈 (오늘의 판단에 바로 쓰이는 숫자)
+ *   ② 해야 할 일 — 경고·리마인더를 한 곳에 모아 개수까지 보여준다
+ *   ③ 흐름·기록  — 이번 달 상태와 도구. 덜 급한 것은 '더 보기'로 접는다 */
 function renderHome(){
   const ym=thisYM(), {inc,exp,bal}=totals(ym);
-  $('h-net').textContent=fmt(netAssets());
-  const cp=totalCreditPendingNet();
-  $('h-net-sub').textContent=`총자산 ${fmtK(totalAssets())}원${cp>0?` − 카드 미결제 ${fmtK(cp)}원`:''}`;
-  $('h-inc').textContent='+'+fmtK(inc);
-  $('h-exp').textContent='−'+fmtK(exp);
-  const balEl=$('h-bal');
-  balEl.textContent=(bal>=0?'+':'−')+fmtK(Math.abs(bal));
-  balEl.className='v num '+(bal>=0?'pos':'neg');
-  // Health Score 칩
-  const hs=healthScore(ym);
-  $('h-score-chip').innerHTML=
-    scoreRing(hs.total)+`<div><div style="font-size:.68rem;color:var(--sub);font-weight:700">Health Score</div><div style="font-size:.78rem;font-weight:800">${hs.total>=80?'훌륭해요':hs.total>=55?'양호해요':'점검 필요'}</div></div>`;
+  renderHero(ym,inc,exp,bal);
   // 저장소 경고
   $('storage-banner').innerHTML = store.ok?'':
     `<div class="banner" style="background:var(--terra-soft);border-color:var(--terra-line);border-left-color:var(--terra)"><div class="b-main">⚠️ 미리보기 환경이라 데이터가 저장되지 않아요. 파일을 저장해 Safari에서 열면 자동 저장됩니다.</div></div>`;
@@ -1394,6 +1517,65 @@ function renderHome(){
   // 최근 내역
   const recent=[...S.tx].sort((a,b)=>b.date.localeCompare(a.date)||b.id.localeCompare(a.id)).slice(0,6);
   $('recent-tx').innerHTML = recent.length?recent.map(txRow).join(''):`<div class="empty">아직 내역이 없어요. ＋ 버튼으로 첫 기록을 남겨보세요.</div>`;
+  refreshTodo();
+  applyHomeMore();
+}
+/* ① 히어로 — 대표 숫자는 '쓸 수 있는 돈'.
+ *    입출금 계좌가 없어 계산이 안 되면 순자산으로 물러선다(없는 값을 지어내지 않는다). */
+function renderHero(ym,inc,exp,bal){
+  const s=safeSpend();
+  const lead=$('h-lead'), label=$('h-lead-label'), sub=$('h-lead-sub'), btn=$('h-lead-btn');
+  const c1k=$('h-c1-k'), c1v=$('h-c1-v');
+  if(s.ok){
+    label.textContent = s.hz.kind==='income' ? `${s.hz.name}까지 쓸 수 있는 돈` : '이달 말까지 쓸 수 있는 돈';
+    lead.textContent = fmt(s.usable);
+    lead.className = 'amount num'+(s.usable<0?' neg':'');
+    const tight = s.budgetLeft!=null && s.budgetLeft < s.usable;
+    // 마이너스면 '하루 0원'이라고 말해봐야 도움이 안 된다 — 얼마가 모자란지를 말한다
+    sub.innerHTML = s.usable<0
+      ? `<span style="color:var(--terra-deep)">예정된 지출이 잔액보다 <b>${fmtK(-s.usable)}원</b> 많아요</span> · ${s.days}일 남음`
+      : `${s.days}일 남음 · 하루 <b class="num">${fmt(s.perDay)}</b> 꼴`
+        + (tight?` · <span style="color:var(--gold)">예산 기준 ${fmtK(s.budgetLeft)}원</span>`:'');
+    btn.style.display='';
+    c1k.textContent='순자산'; c1v.textContent=fmtK(netAssets())+'원'; c1v.className='v num';
+  }else{
+    label.textContent='순자산';
+    lead.textContent=fmt(netAssets());
+    lead.className='amount num';
+    const cp=totalCreditPendingNet();
+    sub.innerHTML=`총자산 ${fmtK(totalAssets())}원${cp>0?` − 카드 미결제 ${fmtK(cp)}원`:''}`
+      +`<br><span style="color:var(--terra-deep)">입출금 계좌를 등록하면 '쓸 수 있는 돈'을 계산해드려요</span>`;
+    btn.style.display='none';
+    c1k.textContent='이번 달 수지';
+    c1v.textContent=(bal>=0?'+':'−')+fmtK(Math.abs(bal));
+    c1v.className='v num '+(bal>=0?'pos':'neg');
+  }
+  $('h-inc').textContent='+'+fmtK(inc);
+  $('h-exp').textContent='−'+fmtK(exp);
+  const hs=healthScore(ym);
+  $('h-score-chip').innerHTML=
+    scoreRing(hs.total)+`<div><div style="font-size:.68rem;color:var(--sub);font-weight:700">Health Score</div><div style="font-size:.78rem;font-weight:800">${hs.total>=80?'훌륭해요':hs.total>=55?'양호해요':'점검 필요'}</div></div>`;
+}
+/* ② 해야 할 일 — 빈 슬롯을 세어 개수를 붙이고, 하나도 없으면 그렇게 말한다 */
+function refreshTodo(){
+  const zone=$('todo-zone'); if(!zone)return;
+  const n=[...zone.children].filter(el=>
+    el.innerHTML.trim()!=='' && el.style.display!=='none' && el.dataset.nag!=='1').length;
+  $('todo-count').innerHTML = n?`<span class="badge terra num">${n}</span>`:'';
+  $('todo-empty').innerHTML = n?'':
+    `<div class="card tight"><div class="tiny" style="text-align:center;padding:3px 0">✅ 지금 급한 일은 없어요.</div></div>`;
+}
+/* ③ 덜 급한 카드는 접어둔다 (상태는 기억) */
+function applyHomeMore(){
+  const el=$('home-more'); if(!el)return;
+  const on=!!(S.settings&&S.settings.homeMore);
+  el.style.display=on?'':'none';
+  $('more-label').textContent=on?'접기':'더 보기';
+  $('more-caret').textContent=on?'▴':'▾';
+}
+function toggleHomeMore(){
+  S.settings.homeMore=!(S.settings&&S.settings.homeMore);
+  save(); applyHomeMore();
 }
 function goMakeReport(ym){switchView('report');selectRepMonth(ym);genReport(ym);}
 function payLabel(t){
@@ -5971,6 +6153,9 @@ function syncStatusColor(){ const s=window.Sync?Sync.status:'off';
   return s==='synced'?'var(--green)':s==='error'?'var(--danger)':(s==='syncing'||s==='connecting')?'var(--gold)':'var(--sub)'; }
 function renderSyncBanner(){
   const el=$('sync-banner');
+  // 로그인 권유는 '오늘 할 일'이 아니라 상시 안내다. 개수 배지에 잡히면
+  // 로그인 안 한 사람에게 영원히 '할 일 1'이 붙는다 → nag 로 표시해 세지 않는다.
+  if(el)el.dataset.nag='1';
   if(el){
     if(!window.Sync||!Sync.configured()){ el.innerHTML=''; }
     else if(Sync.status==='signedout'){
@@ -5979,6 +6164,8 @@ function renderSyncBanner(){
       // 한 번도 로그인한 적 없는 사용자에게 빨간 오류를 띄우면 겁만 준다.
       // 실제로 동기화를 쓰던 사람에게만 경고하고, 신규 사용자에겐 평소 안내를 보여준다.
       if(S.settings&&S.settings.syncUsed){
+        // 실제로 쓰던 사람의 동기화 오류는 진짜 '할 일'이다 (권유 안내와 달리 개수에 포함)
+        el.dataset.nag='';
         el.innerHTML=`<div class="card tight" style="background:var(--terra-soft);border-color:var(--terra-line)"><div style="font-size:.82rem;color:var(--terra-deep)">☁️ 동기화 오류 — ${esc(Sync.lastError||'')}</div><div class="tiny" style="margin-top:3px;color:var(--sub)">로컬 저장은 정상이에요. 설정에서 다시 시도할 수 있어요.</div></div>`;
       }else{
         el.innerHTML=`<div class="card tight row"><div style="font-size:.86rem;min-width:0"><b>☁️ 기기 간 동기화</b><br><span class="tiny">폰·패드·PC가 같은 데이터를 공유해요</span></div><button class="btn primary sm" style="flex-shrink:0" onclick="openSettings()">로그인</button></div>`;
@@ -5986,14 +6173,16 @@ function renderSyncBanner(){
     } else { el.innerHTML=''; }
   }
   const line=$('sync-status-line'); if(line){ line.textContent=syncStatusText(); line.style.color=syncStatusColor(); }
+  refreshTodo();   // 홈의 '해야 할 일' 개수는 이 배너가 늦게 떠도 맞아야 한다
 }
 /* 서버 자동화: 매일 계산된 '오늘의 리마인더' 카드 */
 function renderDigestCard(d){
   const el=$('digest-slot'); if(!el) return;
-  if(!d || !d.digest || !Array.isArray(d.digest.items) || !d.digest.items.length){ el.innerHTML=''; return; }
+  if(!d || !d.digest || !Array.isArray(d.digest.items) || !d.digest.items.length){ el.innerHTML=''; refreshTodo(); return; }
   el.innerHTML=`<div class="card tight">
     <div class="row" style="margin-bottom:6px"><b style="font-size:.9rem">🌅 오늘의 리마인더</b><span class="tiny">서버 · ${esc(d.digest.date||'')}</span></div>
     ${d.digest.items.map(it=>`<div class="row" style="padding:6px 0;gap:8px"><span style="font-size:1.05rem">${esc(it.emo||'•')}</span><span style="flex:1;font-size:.86rem;font-weight:600">${esc(it.title||'')}</span><span class="tiny num" style="text-align:right">${esc(it.detail||'')}</span></div>`).join('')}</div>`;
+  refreshTodo();
 }
 function refreshDigest(){
   if(!(window.Sync && Sync.signedIn && Sync.signedIn() && Sync.getDigest)){ const el=$('digest-slot'); if(el)el.innerHTML=''; return; }
