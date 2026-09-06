@@ -853,7 +853,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20260904-home';
+const APP_BUILD='20260905-cats';
 const KEY='claudeflow_v1';
 const store={
   ok:(()=>{try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true}catch(e){return false}})(),
@@ -948,7 +948,10 @@ function migrate(){
       }
     }
   });
+  // 카테고리 기본값 보강 — 상수(DEF_EXP_CATS)가 정의된 뒤부터만 동작한다
+  if(catsReady)migrateCats();
 }
+let catsReady=false;
 migrate();
 const save=()=>{_discInvalidate();touchNetHist();const _ok=store.save(S);if(window.Sync&&window.Sync.markDirty)window.Sync.markDirty();return _ok};
 /* 오늘의 순자산을 기록한다. save() 안에서 부르므로 여기서 다시 저장하면 안 된다.
@@ -971,11 +974,16 @@ function checkAmt(v,label){
 
 /* ═════════ 상수 ═════════ */
 // 기본 카테고리 (사용자가 추가/수정한 건 S.cats 에 저장 — 아래 EXP_CATS/INC_CATS 는 둘을 합친 결과)
-const DEF_EXP_CATS=[['🍚','식비'],['☕','카페/간식'],['🍻','술/유흥'],['🚇','교통'],['🚗','자동차'],
-  ['🛍️','쇼핑'],['💄','미용'],['💇','헤어/네일'],['🎬','문화/여가'],['🎮','게임/취미'],
-  ['📚','교육'],['📱','통신'],['🔄','구독'],['💊','의료'],['🏋️','운동'],
-  ['✈️','여행'],['🎁','경조사'],['🐶','반려동물'],['🏠','주거'],['🧾','세금/공과금'],
-  ['🤝','회비'],['💝','기부'],['💳','수수료'],['💸','기타']];
+// 비슷한 것끼리 붙여 둔다 — 목록이 길어져도 고를 때 눈이 헤매지 않게.
+const DEF_EXP_CATS=[
+  ['🍚','식비'],['☕','카페/간식'],['🛵','배달'],['🏪','편의점'],['🍻','술/유흥'],['💕','데이트'],
+  ['🚇','교통'],['🚕','택시'],['🚗','자동차'],
+  ['🛍️','쇼핑'],['🧻','생활용품'],['💄','미용'],['💇','헤어/네일'],
+  ['🎬','문화/여가'],['🎮','게임/취미'],['⛳','골프'],['🏋️','운동'],
+  ['📚','교육'],['📱','통신'],['🔄','구독'],
+  ['💊','의료'],['🛡️','보험'],
+  ['✈️','여행'],['🎁','경조사'],['🎀','선물'],['🐶','반려동물'],
+  ['🏠','주거'],['🧾','세금/공과금'],['🤝','회비'],['💝','기부'],['💳','수수료'],['💸','기타']];
 const DEF_INC_CATS=[['📖','과외'],['🧑‍💼','아르바이트'],['💼','급여'],['💌','용돈'],['🎓','장학금'],
   ['📈','투자수익'],['🏦','이자'],['📦','판매수익'],['💰','환급'],['🎉','상금'],
   ['🎊','보너스'],['💵','기타수입']];
@@ -995,6 +1003,23 @@ Object.defineProperty(window,'CAT_EMO',{get:()=>{
   [...DEF_EXP_CATS,...DEF_INC_CATS].forEach(([e,n])=>{ if(!m[n])m[n]=e; });
   return m;
 }});
+/* 앱이 업데이트되며 기본 카테고리가 늘어날 때, 이미 목록을 손댄 사람에게도
+   새 항목을 한 번은 넣어준다. 직접 지운 사람에게 되살아나지 않도록 버전을 남긴다.
+   (목록을 손대지 않은 사람은 기본값을 그대로 읽으므로 아무것도 할 필요가 없다) */
+const CATS_VER=2;
+function migrateCats(){
+  if((S.catsV||0)>=CATS_VER)return;
+  const fill=(kind,def)=>{
+    const cur=S.cats&&S.cats[kind];
+    if(!Array.isArray(cur)||!cur.length)return;
+    const have=new Set(cur.map(x=>x[1]));
+    def.forEach((c,i)=>{ if(!have.has(c[1]))cur.splice(Math.min(i,cur.length),0,c.slice()); });
+  };
+  fill('exp',DEF_EXP_CATS); fill('inc',DEF_INC_CATS);
+  S.catsV=CATS_VER;
+}
+catsReady=true; migrateCats();
+
 const ACC_META={
   checking:{emo:'💳',label:'입출금',bg:'var(--blue-soft)'},
   deposit:{emo:'🏦',label:'예금',bg:'var(--green-soft)'},
@@ -1164,6 +1189,9 @@ function perkMatch(p,t){
   if(ms.length){ const m=_pnorm(t.memo); return ms.some(k=>m.includes(k)); }
   return p.cat==='전체'||t.cat===p.cat;
 }
+/* 할인율이 큰 혜택(20%↑)에 월 한도가 없다면 대개 '무제한'이 아니라 '아직 안 넣은 것'이다.
+   무제한으로 계산하면 조용히 과대추정되므로, 숫자가 보이는 자리에서 그 사실을 알린다. */
+const capUnknown=p=>p&&p.kind==='percent'&&(+p.value||0)>=20&&!(+p.capM>0);
 const dayGap=(a,b)=>Math.round((new Date(b+'T00:00:00')-new Date(a+'T00:00:00'))/86400000);
 /* 'N일 연속 이용 시 2배' 조건.
    ⚠️ 카드사 약관이 '며칠째부터' 올려주는지는 명시하지 않는 경우가 많다.
@@ -3053,6 +3081,7 @@ function renderCards(){
             <div class="row"><span style="font-size:.85rem;font-weight:600;${e.active?'':'color:var(--faint)'}">${e.active?'🟢':'🔒'} ${esc(p.name)}</span>
             <b class="num" style="font-size:.84rem;${e.active?(e.est>0?'color:var(--green)':''):'color:var(--faint)'}">${e.active?(e.est>0?'예상 +'+fmt(e.est):'—'):'잠김'}</b></div>
             <div class="tiny">${cond}${(p.capM||0)>0&&e.active?` · 한도 ${fmt(e.est)}/${fmt(p.capM)} (${Math.round(e.est/p.capM*100)}%)`:''}</div>
+            ${capUnknown(p)&&e.active&&e.n>0?`<div class="tiny" style="margin-top:2px;color:var(--terra-deep)">⚠️ 월 한도를 안 넣어서 <b>무제한으로 계산</b>했어요 — 실제보다 많게 잡힐 수 있어요</div>`:''}
             ${boostNote&&e.active?`<div class="tiny" style="margin-top:2px">${boostNote}</div>`:''}
           </div>`}).join('')}
         <div class="row" style="padding-top:8px"><span class="tiny">이번 달 예상 혜택 합계 <i>(예상치 · 실제 적립은 카드사 기준)</i></span><b class="num pos">+${fmt(sum)}</b></div>`;
@@ -3274,10 +3303,10 @@ function streakActionable(){
  * ⚠️ 값은 등록 시점 기준이다. 카드사가 조건을 바꾸면 직접 수정해야 한다. */
 const PERK_PRESETS=[{
   id:'hana-3day-2x',
-  name:'하나카드 · 3일 2배 적립 + ONLINE 적립',
-  desc:'영역별 3일 연속 이용 시 2배 · ONLINE 적립은 전월 50만원 이상',
+  name:'하나카드 MOVING ONLINE (3일 2배 적립)',
+  desc:'영역별 3일 연속 이용 시 2배 · 영역 할인은 전월 50만원 이상',
   tiers:[500000],
-  warn:'스트리밍·멤버십의 <b>월 적립 한도</b>는 확인하지 못해 비워뒀어요. 카드사 앱에서 보고 채워주세요.',
+  warn:'스트리밍·멤버십의 <b>월 적립 한도</b>는 확인하지 못해 비워뒀어요 (지금은 무제한으로 계산돼요). 카드사 앱에서 보고 채워주세요.',
   perks:[
     {name:'국내외 가맹점 기본적립',cat:'전체',merchants:'',kind:'percent',value:0.5,boost:1,
      streakDays:3,via:'normal',minAmt:0,capM:0,maxCnt:0,tier:0,bill:false},
@@ -3290,7 +3319,7 @@ const PERK_PRESETS=[{
      kind:'percent',value:50,boost:0,streakDays:0,via:'',minAmt:0,capM:0,maxCnt:0,tier:1,bill:false},
     {name:'디지털 구독 · 멤버십',cat:'구독',merchants:'쿠팡와우, 컬리멤버스, 네이버플러스, 배민클럽',
      kind:'percent',value:50,boost:0,streakDays:0,via:'',minAmt:0,capM:0,maxCnt:0,tier:1,bill:false},
-    {name:'택시',cat:'교통',merchants:'카카오T, UT, 택시',
+    {name:'택시',cat:'택시',merchants:'카카오T, UT, 택시',
      kind:'percent',value:50,boost:0,streakDays:0,via:'',minAmt:0,capM:5000,maxCnt:0,tier:1,bill:false},
     {name:'푸드 (커피·패스트푸드)',cat:'식비',
      merchants:'스타벅스, 맥도날드, 롯데리아, 버거킹, KFC, 쉐이크쉑, 써브웨이, 맘스터치, 파이브가이즈',
