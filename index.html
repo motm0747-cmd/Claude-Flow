@@ -853,7 +853,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20260909-prepay';
+const APP_BUILD='20260909-exempt';
 const KEY='claudeflow_v1';
 const store={
   ok:(()=>{try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true}catch(e){return false}})(),
@@ -904,6 +904,8 @@ function migrate(){
   S.cards.forEach(c=>{
     if(c.annualFee===undefined)c.annualFee=0;
     if(!c.prepays)c.prepays=[];                    // 선결제 이력
+    if(c.issued===undefined)c.issued='';           // 발급일 (넣으면 첫 달 실적 면제)
+    if(c.exemptM===undefined)c.exemptM=1;          // 전월실적 면제 개월 수
     if(c.type==='credit'&&!c.autoPre)              // 매주 자동 선결제 설정 (기본 꺼짐)
       c.autoPre={on:false,weekday:5,min:300000,lastRun:''};
   });
@@ -1178,6 +1180,25 @@ function perfSpend(card,ym){ // 실적 인정액: 제외 카테고리·실적제
   return monthTx(ym).filter(t=>t.type==='expense'&&t.payKind==='card'&&t.payId===card.id&&!t.noPerf&&!(card.exclCats||[]).includes(t.cat)).reduce((s,t)=>s+t.amount,0);
 }
 const achievedTierBy=(amt,tiers)=>tiers.filter(t=>amt>=t).length;
+/* ── 발급 첫 달 전월실적 면제 ──────────────────────────────────────────
+ * 새로 발급한 카드는 전월 사용액이 있을 수 없으므로, 카드사들이 첫 달(또는 그
+ * 다음 달까지)은 실적 조건을 면제해준다. 면제 기간에는 최고 구간이 열린 것으로 본다.
+ * 발급일을 안 넣었으면 예전처럼 실적 그대로 판정한다(없는 혜택을 지어내지 않게). */
+function tierExemptLeft(card,ym){          // 면제가 남은 달 수 (0 = 면제 아님)
+  if(!card||!card.issued)return 0;
+  const n=(card.exemptM===undefined?1:+card.exemptM)||0;
+  if(n<=0)return 0;
+  const d=monthDiff(String(card.issued).slice(0,7),ym||thisYM());
+  return (d>=0&&d<n)?(n-d):0;
+}
+const tierExempt=(card,ym)=>tierExemptLeft(card,ym)>0;
+/* 이 달에 열려 있는 실적 구간. 무실적 카드는 Infinity(항상 열림) */
+function activeTierOf(card,ym){
+  const tiers=(card&&card.tiers)||[];
+  if(!tiers.length)return Infinity;
+  if(tierExempt(card,ym))return tiers.length;   // 면제 — 최고 구간까지 열어준다
+  return achievedTierBy(perfSpend(card,prevYM(ym||thisYM())),tiers);
+}
 /* ── 혜택 판정 ────────────────────────────────────────────────────────
  * 카드사 혜택은 '카테고리'가 아니라 '영역(가맹점 묶음)' 으로 정의되는 경우가 많다.
  * 예: AI 구독 = ChatGPT·Claude·Perplexity / 택시 = 카카오T·UT
@@ -1217,7 +1238,7 @@ function streakQualified(dates,n){
    적립이 얼마나 늘어나는지 보려고 쓴다. S.tx 는 건드리지 않는다. */
 function perkEstimates(card,ym,extra){ // 혜택별 이번 달 예상 적립액 (전월 실적으로 활성 판정)
   const tiers=card.tiers||[];
-  const activeTier=tiers.length?achievedTierBy(perfSpend(card,prevYM(ym)),tiers):Infinity;
+  const activeTier=activeTierOf(card,ym);
   const ex=extra?Object.assign({},extra,{type:'expense',payKind:'card',payId:card.id}):null;
   const pool=ex?monthTx(ym).concat([ex]):monthTx(ym);
   const all=ex?S.tx.concat([ex]):S.tx;
@@ -3059,7 +3080,8 @@ function renderCards(){
     const spend=cardMonthSpend(c.id,ym);
     const tiers=c.tiers||[];
     const perf=perfSpend(c,ym), perfPrev=perfSpend(c,pm);
-    const tierNow=tiers.length?achievedTierBy(perfPrev,tiers):0;
+    const exLeft=tierExemptLeft(c,ym);
+    const tierNow=tiers.length?(exLeft?tiers.length:achievedTierBy(perfPrev,tiers)):0;
     /* 이번 달 혜택 (전월 실적으로 판정) */
     let perkHtml='';
     const ests=perkEstimates(c,ym);
@@ -3067,7 +3089,7 @@ function renderCards(){
       const sum=ests.reduce((s,e)=>s+e.est,0);
       perkHtml=`<div class="divider"></div>
         <div class="row" style="margin-bottom:2px"><b style="font-size:.85rem">이번 달 혜택</b>
-        ${tiers.length?(tierNow>0?`<span class="badge green">전월 ${fmtK(perfPrev)}원 · ${tierNow}구간 활성 ✓</span>`:`<span class="badge terra">전월 실적 미달 · 혜택 잠김</span>`):`<span class="badge green">무실적 · 항상 적용</span>`}</div>
+        ${tiers.length?(exLeft?`<span class="badge blue">🎁 발급 첫 달 — 실적 면제${exLeft>1?` (${exLeft}개월 남음)`:''}</span>`:(tierNow>0?`<span class="badge green">전월 ${fmtK(perfPrev)}원 · ${tierNow}구간 활성 ✓</span>`:`<span class="badge terra">전월 실적 미달 · 혜택 잠김</span>`)):`<span class="badge green">무실적 · 항상 적용</span>`}</div>
         ${ests.map(e=>{const p=e.p, ms=perkMerchants(p);
           const rate=v=>p.kind==='percent'?v+'%':fmtK(v)+'원/건';
           const cond=[
@@ -3340,7 +3362,7 @@ function doPrepaySelected(){
 }
 function openCardModal(id){
   const c=id?cardById(id):null;
-  cardDraft=c?JSON.parse(JSON.stringify(c)):{id:null,type:'check',name:'',accountId:'',payDay:14,tiers:[],exclCats:[],perks:[],benefits:'',lastSettled:''};
+  cardDraft=c?JSON.parse(JSON.stringify(c)):{id:null,type:'check',name:'',accountId:'',payDay:14,tiers:[],exclCats:[],perks:[],benefits:'',lastSettled:'',issued:'',exemptM:1,prepays:[]};
   cardDraft.tiersText=(cardDraft.tiers||[]).join(', ');
   renderCardModal();
 }
@@ -3352,6 +3374,8 @@ function syncCardDraft(){
   if(g('cd-tiers'))cardDraft.tiersText=g('cd-tiers').value;
   if(g('cd-benefits'))cardDraft.benefits=g('cd-benefits').value;
   if(g('cd-fee'))cardDraft.annualFee=Math.round(+g('cd-fee').value||0);
+  if(g('cd-issued'))cardDraft.issued=g('cd-issued').value;
+  if(g('cd-exempt'))cardDraft.exemptM=Math.max(0,Math.min(3,+g('cd-exempt').value||0));
   if(g('cd-ap-on')){
     const ap=cardDraft.autoPre=Object.assign(defAutoPre(),cardDraft.autoPre||{});
     ap.on=g('cd-ap-on').checked;
@@ -3433,7 +3457,7 @@ function cardPickReason(r){
 function cardStreaks(card,ym){
   const M=ym||thisYM(), today=todayStr(), yst=addDays(today,-1);
   const tiers=card.tiers||[];
-  const activeTier=tiers.length?achievedTierBy(perfSpend(card,prevYM(M)),tiers):Infinity;
+  const activeTier=activeTierOf(card,M);
   return(card.perks||[]).filter(p=>(p.boost||0)>0&&(p.streakDays||0)>1).map(p=>{
     const need=(p.tier===undefined?1:p.tier);
     const active=need===0?true:(tiers.length?activeTier>=need:true);
@@ -3655,6 +3679,19 @@ function renderCardModal(){
         ${c.id?`다음 예정 <b>${esc(mdLabel(nextPrepayDate(c)))}</b> (${WEEKDAYS[+ap.weekday||0]}요일)`:'저장하면 다음 지정 요일부터 동작해요'}
         · 잔액이 모자라면 건너뛰고 다음에 다시 시도해요${ap.lastRun?` · 마지막 실행 ${esc(mdLabel(ap.lastRun))}`:''}</div>`:''}
     </div>`})():''}
+    ${c.type==='credit'?`<div class="grid2">
+      <div class="field"><label>발급일 (선택)</label>
+        <input type="date" id="cd-issued" value="${c.issued||''}" onchange="syncCardDraft();renderCardModal()"></div>
+      <div class="field"><label>전월 실적 면제</label>
+        <select id="cd-exempt" onchange="syncCardDraft();renderCardModal()" ${c.issued?'':'disabled'}>
+          ${[[0,'면제 없음'],[1,'발급월 1개월'],[2,'발급월+다음 달 2개월'],[3,'3개월']].map(([v,l])=>
+            `<option value="${v}" ${(c.exemptM===undefined?1:+c.exemptM)===v?'selected':''}>${l}</option>`).join('')}</select></div>
+    </div>
+    <div class="tiny" style="margin:-6px 0 12px">${c.issued
+      ? (tierExemptLeft(c,thisYM())
+          ? `🎁 지금 <b style="color:var(--blue)">실적 면제 중</b> — 이번 달은 전월 실적과 상관없이 혜택이 열려요 (${tierExemptLeft(c,thisYM())}개월 남음).`
+          : `발급 ${esc(String(c.issued).slice(0,7))} · 면제 기간이 끝나 전월 실적으로 판정해요.`)
+      : '💡 발급일을 넣으면 <b>새 카드는 전월 사용액이 없으니</b> 첫 달 실적을 면제해서 계산해요.'}</div>`:''}
     <div class="field"><label>실적 구간 (선택 — 무실적 카드는 비워두세요)</label>
       <input id="cd-tiers" value="${esc(c.tiersText)}" placeholder="비워두면 무실적 카드">
       <div class="tiny" style="margin-top:4px">${tiersArr.length
@@ -5632,7 +5669,11 @@ function pickAdvice(card,ym){
   const tiers=card.tiers||[], prev=prevYM(ym);
   const perfPrev=perfSpend(card,prev), perfNow=perfSpend(card,ym);
   // ① 실적 미달로 혜택 잠김
-  if(tiers.length){
+  const exLeft=tierExemptLeft(card,ym);
+  if(tiers.length&&exLeft){
+    out.push({icon:'🎁',t:`발급 첫 달 — 전월 실적이 면제돼요`,
+      d:`이번 달은 실적과 상관없이 혜택이 전부 열려 있어요.${exLeft>1?` (${exLeft}개월 남음)`:''} 다음 달부터는 <b>${fmtK(tiers[0])}원</b> 실적이 필요하니, 이번 달에 <b>${fmtK(Math.max(0,tiers[0]-perfNow))}원</b>을 더 쓰면 이어서 열려요.`});
+  }else if(tiers.length){
     const t=achievedTierBy(perfPrev,tiers);
     if(t===0){
       const need=tiers[0]-perfPrev;

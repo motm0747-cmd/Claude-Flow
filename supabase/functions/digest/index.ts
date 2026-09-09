@@ -77,6 +77,22 @@ function perfSpendTs(tx: any[], card: any, ym: string): number {
   return s;
 }
 const achievedTierByTs = (amt: number, tiers: number[]) => tiers.filter((t) => amt >= t).length;
+function monthDiffTsYM(a: string, b: string): number {
+  const [y1, m1] = a.split("-").map(Number), [y2, m2] = b.split("-").map(Number);
+  return (y2 - y1) * 12 + (m2 - m1);
+}
+/* 발급 첫 달 전월실적 면제 — 앱(index.html)의 activeTierOf 와 같은 규칙.
+   두 쪽이 다르게 판정하면 "앱은 열렸다는데 알림은 잠겼다고 한다"가 된다. */
+function activeTierOfTs(tx: any[], card: any, ym: string): number {
+  const tiers: number[] = Array.isArray(card.tiers) ? card.tiers.map((x: any) => +x) : [];
+  if (!tiers.length) return Infinity;
+  const n = card.exemptM === undefined ? 1 : (+card.exemptM || 0);
+  if (card.issued && n > 0) {
+    const d = monthDiffTsYM(String(card.issued).slice(0, 7), ym);
+    if (d >= 0 && d < n) return tiers.length;      // 면제 기간
+  }
+  return achievedTierByTs(perfSpendTs(tx, card, prevYmTs(ym)), tiers);
+}
 function addDaysTs(d: string, n: number): string {
   const t = new Date(d + "T00:00:00"); t.setDate(t.getDate() + n);
   return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
@@ -94,7 +110,7 @@ function streakReadyItems(tx: any[], cards: any[], today: string, ym: string): I
   for (const c of cards) {
     if (!c || c.type !== "credit") continue;
     const tiers: number[] = Array.isArray(c.tiers) ? c.tiers.map((x: any) => +x) : [];
-    const activeTier = tiers.length ? achievedTierByTs(perfSpendTs(tx, c, prevYmTs(ym)), tiers) : Infinity;
+    const activeTier = activeTierOfTs(tx, c, ym);
     for (const p of (c.perks || [])) {
       if (!((+p.boost || 0) > 0 && (+p.streakDays || 0) > 1)) continue;
       const need = p.tier === undefined ? 1 : p.tier;
