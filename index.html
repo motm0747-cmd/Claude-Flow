@@ -853,7 +853,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20260905-cats';
+const APP_BUILD='20260909-prepay';
 const KEY='claudeflow_v1';
 const store={
   ok:(()=>{try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true}catch(e){return false}})(),
@@ -901,7 +901,12 @@ function migrate(){
   if(S.notify.flowrisk===undefined)S.notify.flowrisk=true;
   if(S.notify.invperiod===undefined)S.notify.invperiod=true;
   S.fixed.forEach(f=>{ if(!f.kind)f.kind='expense'; if(f.from===undefined)f.from=''; if(f.to===undefined)f.to=''; });
-  S.cards.forEach(c=>{ if(c.annualFee===undefined)c.annualFee=0; });
+  S.cards.forEach(c=>{
+    if(c.annualFee===undefined)c.annualFee=0;
+    if(!c.prepays)c.prepays=[];                    // 선결제 이력
+    if(c.type==='credit'&&!c.autoPre)              // 매주 자동 선결제 설정 (기본 꺼짐)
+      c.autoPre={on:false,weekday:5,min:300000,lastRun:''};
+  });
   // 제거된 기능(문자 자동 기록·토스증권 연동)이 남긴 데이터 청소 — 동기화 용량만 차지한다
   if(S.sms)delete S.sms;
   S.cards.forEach(c=>{ if(c.last4!==undefined)delete c.last4; });
@@ -3113,8 +3118,12 @@ function renderCards(){
         <div class="row"><div><div class="tiny">결제 예정 금액${remain>0?` · 할부 잔여 ${fmtK(remain)}원 별도`:''}</div>
         <div class="num" style="font-weight:800;font-size:1.05rem">${fmt(net)}</div>
         ${billCut>0?`<div class="tiny">사용액 ${fmt(pend)} · <b class="pos">청구할인 −${fmt(billCut)}</b> 반영됨</div>`:''}
-        <div class="tiny">매월 ${c.payDay}일 · ${acc?esc(acc.name):'연결 계좌 없음'}에서 출금</div></div>
-        <button class="btn dark sm" ${pend<=0?'disabled':''} onclick="settleCard('${c.id}')">결제 처리</button></div>`;
+        <div class="tiny">매월 ${c.payDay}일 · ${acc?esc(acc.name):'연결 계좌 없음'}에서 출금</div>
+        ${(c.autoPre&&c.autoPre.on)?`<div class="tiny" style="margin-top:3px">⚡ 자동 선결제 — ${WEEKDAYS[+c.autoPre.weekday||0]}요일 · ${fmtK(c.autoPre.min||0)}원 이상일 때 · 다음 ${esc(mdLabel(nextPrepayDate(c)))}</div>`:''}</div>
+        <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
+          <button class="btn dark sm" ${pend<=0?'disabled':''} onclick="settleCard('${c.id}')">결제 처리</button>
+          <button class="btn ghost sm" ${pend<=0?'disabled':''} onclick="openPrepayModal('${c.id}')">선결제</button>
+        </div></div>`;
     }
     return`<div class="pay-card">
       <div class="pc-top">
@@ -3181,6 +3190,154 @@ function settleCard(id){
   c.lastSettled=todayStr();
   commit(disc>0?`결제 처리 · 할인 ${fmt(disc)} 반영`:'결제 처리했어요');
 }
+
+/* ═════════ 선결제 ═════════
+ * 청구일이 오기 전에 미리 갚는 기능. 회계는 정기 결제(settleCard)와 똑같이 하되
+ * 대상 거래를 골라서 갚을 수 있다 — 정기 결제는 미결제 전액이 대상이다.
+ *
+ * 카드사의 '자동 선결제'는 대개 **미결제 잔액이 기준액 이상이면 지정 요일에 전액 출금**
+ * 하는 형태라 그대로 옮겼다. 선결제하면 잔액이 0이 되므로, 결과적으로 '그 주에 쓴 만큼'을
+ * 매주 갚는 동작이 된다. */
+const WEEKDAYS=['일','월','화','수','목','금','토'];
+const defAutoPre=()=>({on:false,weekday:5,min:300000,lastRun:''});
+
+// 아직 안 갚은(청구됐지만 미납) 카드 거래 — 최신순
+function prepayables(c){
+  if(!c||c.type!=='credit')return [];
+  return S.tx.filter(t=>t.type==='expense'&&t.payKind==='card'&&t.payId===c.id&&pendingOfTx(t)>0)
+    .sort((a,b)=>b.date.localeCompare(a.date)||b.id.localeCompare(a.id));
+}
+// 이 거래들을 갚을 때 실제로 나가는 돈 (청구할인은 월별 비례 배분 — settleCard와 같은 회계)
+function prepayAmount(c,list){
+  const byM={}; let gross=0;
+  (list||[]).forEach(t=>{
+    const np=duePortions(t), op=t.paidPortions||0;
+    let amt=0; for(let k=op;k<np;k++)amt+=portionAmt(t,k);
+    if(amt<=0)return;
+    gross+=amt; byM[ymOf(t.date)]=(byM[ymOf(t.date)]||0)+amt;
+  });
+  let disc=0; Object.entries(byM).forEach(([m,amt])=>{disc+=discOfAmount(c,m,amt)});
+  disc=Math.min(gross,Math.round(disc));
+  return {gross,disc,net:gross-disc};
+}
+/* 실제 처리. date 를 넘기면 그 날짜로 기록한다
+   (자동 선결제는 앱을 늦게 열어도 '지정 요일'에 나간 것으로 남겨야 하므로) */
+function applyPrepay(c,list,how,date){
+  const amt=prepayAmount(c,list);
+  if(amt.gross<=0)return null;
+  const d=date||todayStr();
+  const a=accById(c.accountId);
+  if(a)applyToAcc(a,amt.net,-1);
+  // 청구할인은 정기 결제와 마찬가지로 별도 내역으로 남겨 지출 통계에 반영
+  if(amt.disc>0){
+    S.tx.push({id:uid(),type:'discount',date:d,amount:amt.disc,cat:'청구할인',
+      memo:`${c.name} 청구할인 (선결제)`,payKind:'card',payId:c.id,cardId:c.id,fxAt:fxRate(),defended:true});
+  }
+  list.forEach(t=>{t.paidPortions=duePortions(t)});
+  c.prepays=(c.prepays||[]).concat([{id:uid(),date:d,gross:amt.gross,disc:amt.disc,net:amt.net,
+    n:list.length,how:how||'manual'}]).slice(-60);
+  return amt;
+}
+/* 이번 주의 지정 요일 날짜 (일요일 시작) */
+function weekdayDate(wd){
+  return addDays(todayStr(),(Math.max(0,Math.min(6,+wd||0)))-new Date().getDay());
+}
+/* 다음 실행 예정일 — 이번 주 몫이 끝났으면 다음 주 */
+function nextPrepayDate(c){
+  const ap=c.autoPre||defAutoPre(), due=weekdayDate(ap.weekday);
+  return (due<todayStr()||(ap.lastRun||'')>=due)?addDays(due,7):due;
+}
+/* 앱을 열 때 도는 자동 선결제 */
+function autoPrepayCards(){
+  const today=todayStr();
+  const done=[], skipped=[];
+  S.cards.forEach(c=>{
+    if(c.type!=='credit')return;
+    const ap=c.autoPre; if(!ap||!ap.on)return;
+    const due=weekdayDate(ap.weekday);
+    if(due>today)return;                       // 이번 주 지정 요일이 아직 안 왔다
+    if((ap.lastRun||'')>=due)return;           // 이번 주 몫은 이미 처리했다
+    const list=prepayables(c), amt=prepayAmount(c,list);
+    if(amt.gross<(+ap.min||0)){                // 기준 미달 — 카드사도 이 주는 그냥 넘어간다
+      ap.lastRun=due; return;
+    }
+    const a=accById(c.accountId);
+    // 잔액이 모자라면 마이너스를 만들지 않고 보류한다 (lastRun 을 올리지 않아 다음에 다시 시도)
+    if(a&&accKRW(a)<amt.net){ skipped.push(`${c.name}(잔액 부족)`); return; }
+    applyPrepay(c,list,'auto',due);
+    ap.lastRun=due;
+    done.push(`${c.name} ${fmtK(amt.net)}원`);
+  });
+  if(done.length||skipped.length){
+    save();
+    if(done.length)toast(`자동 선결제 — ${done.join(' · ')}`);
+    else toast(`자동 선결제 보류 — ${skipped[0]}`);
+  }
+}
+
+/* ── 건별 선결제 화면 ── */
+let ppCard=null, ppSel=new Set();
+function openPrepayModal(cardId){ ppCard=cardId; ppSel=new Set(); renderPrepayModal(); }
+function ppToggle(id){ ppSel.has(id)?ppSel.delete(id):ppSel.add(id); renderPrepayModal(); }
+function ppToggleAll(){
+  const list=prepayables(cardById(ppCard));
+  ppSel = (ppSel.size===list.length) ? new Set() : new Set(list.map(t=>t.id));
+  renderPrepayModal();
+}
+function renderPrepayModal(){
+  const c=cardById(ppCard); if(!c)return;
+  const list=prepayables(c);
+  const sel=list.filter(t=>ppSel.has(t.id));
+  const amt=prepayAmount(c,sel), all=prepayAmount(c,list);
+  const a=accById(c.accountId), bal=a?accKRW(a):0;
+  const short=!!a&&amt.net>bal;
+  openModal(`${sheetHead('선결제')}
+    <div class="tiny" style="margin:-4px 2px 12px">청구일 전에 미리 갚을 내역을 고르세요. 고른 만큼 ${a?`<b>${esc(a.name)}</b>에서 바로 빠지고`:'기록되고'}, 결제 예정 금액이 그만큼 줄어요.</div>
+    ${list.length?`
+      <div class="row" style="margin-bottom:8px">
+        <span class="tiny">미결제 ${list.length}건 · 전체 ${fmt(all.net)}</span>
+        <button class="btn ghost sm" onclick="ppToggleAll()">${sel.length===list.length?'전체 해제':'전체 선택'}</button></div>
+      <div class="card tight" style="margin-bottom:12px;max-height:44vh;overflow-y:auto">
+        ${list.map(t=>{
+          const p=pendingOfTx(t), on=ppSel.has(t.id), inst=(t.months||1)>1;
+          return`<label class="row" style="padding:8px 0;gap:10px;cursor:pointer;border-bottom:1px solid var(--line)">
+            <input type="checkbox" style="width:auto;flex:none" ${on?'checked':''} onchange="ppToggle('${t.id}')">
+            <span style="flex:1;min-width:0">
+              <span style="font-size:.86rem;font-weight:600">${CAT_EMO[t.cat]||''} ${esc(t.memo||t.cat)}</span><br>
+              <span class="tiny">${esc(mdLabel(t.date))} · ${esc(t.cat)}${inst?` · ${t.months}개월 할부 중 ${duePortions(t)-(t.paidPortions||0)}회분`:''}</span>
+            </span>
+            <b class="num" style="font-size:.88rem;white-space:nowrap">${fmt(p)}</b></label>`}).join('')}
+      </div>
+      <div class="card tight" style="margin-bottom:12px">
+        <div class="row"><span style="font-size:.86rem">고른 내역 ${sel.length}건</span><b class="num">${fmt(amt.gross)}</b></div>
+        ${amt.disc>0?`<div class="row" style="padding-top:5px"><span class="tiny">청구할인</span><b class="num tiny pos">−${fmt(amt.disc)}</b></div>`:''}
+        <div class="divider"></div>
+        <div class="row"><b style="font-size:.9rem">지금 나갈 돈</b>
+          <b class="num" style="font-size:1.1rem;color:var(--terra-deep)">${fmt(amt.net)}</b></div>
+        ${a?`<div class="tiny" style="margin-top:5px">${esc(a.name)} ${fmt(bal)} → <b>${fmt(bal-amt.net)}</b></div>`
+           :`<div class="tiny" style="margin-top:5px;color:var(--terra-deep)">연결 계좌가 없어 기록만 됩니다.</div>`}
+        ${short?`<div class="tiny" style="margin-top:5px;color:var(--terra-deep)">⚠️ 잔액이 ${fmt(amt.net-bal)} 모자라요.</div>`:''}
+      </div>
+      <button class="btn primary block" ${sel.length?'':'disabled'} onclick="doPrepaySelected()">
+        ${sel.length?`${fmt(amt.net)} 선결제하기`:'갚을 내역을 골라주세요'}</button>`
+    :`<div class="empty">미결제 내역이 없어요.<br>이미 다 갚았거나 아직 사용 내역이 없습니다.</div>`}
+    ${(c.prepays||[]).length?`<div class="sec-title">선결제 이력</div>
+      <div class="card tight">${c.prepays.slice().reverse().slice(0,6).map(p=>`
+        <div class="row" style="padding:4px 0">
+          <span class="tiny">${esc(mdLabel(p.date))} · ${p.n}건${p.how==='auto'?' <span class="badge blue">자동</span>':''}</span>
+          <span class="tiny num">−${fmt(p.net)}</span></div>`).join('')}</div>`:''}`);
+}
+function doPrepaySelected(){
+  const c=cardById(ppCard); if(!c)return;
+  const list=prepayables(c).filter(t=>ppSel.has(t.id));
+  if(!list.length)return;
+  const amt=prepayAmount(c,list), a=accById(c.accountId);
+  if(a&&accKRW(a)<amt.net&&
+     !confirm(`${a.name} 잔액이 ${fmt(amt.net-accKRW(a))} 모자라요.\n그래도 선결제할까요? (잔액이 마이너스가 됩니다)`))return;
+  applyPrepay(c,list,'manual');
+  closeModal();
+  commit(`${fmt(amt.net)} 선결제했어요`);
+}
 function openCardModal(id){
   const c=id?cardById(id):null;
   cardDraft=c?JSON.parse(JSON.stringify(c)):{id:null,type:'check',name:'',accountId:'',payDay:14,tiers:[],exclCats:[],perks:[],benefits:'',lastSettled:''};
@@ -3195,6 +3352,12 @@ function syncCardDraft(){
   if(g('cd-tiers'))cardDraft.tiersText=g('cd-tiers').value;
   if(g('cd-benefits'))cardDraft.benefits=g('cd-benefits').value;
   if(g('cd-fee'))cardDraft.annualFee=Math.round(+g('cd-fee').value||0);
+  if(g('cd-ap-on')){
+    const ap=cardDraft.autoPre=Object.assign(defAutoPre(),cardDraft.autoPre||{});
+    ap.on=g('cd-ap-on').checked;
+    if(g('cd-ap-wd'))ap.weekday=Math.max(0,Math.min(6,+g('cd-ap-wd').value||0));
+    if(g('cd-ap-min'))ap.min=Math.max(0,Math.round(+g('cd-ap-min').value||0));
+  }
 }
 function cdType(t){syncCardDraft();cardDraft.type=t;renderCardModal()}
 function toggleExcl(cat){syncCardDraft();const i=cardDraft.exclCats.indexOf(cat);i>=0?cardDraft.exclCats.splice(i,1):cardDraft.exclCats.push(cat);renderCardModal()}
@@ -3478,6 +3641,20 @@ function renderCardModal(){
         ${S.accounts.filter(a=>a.type==='checking').map(a=>`<option value="${a.id}" ${c.accountId===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}</select></div>
       ${c.type==='credit'?`<div class="field"><label>결제일 (매월)</label><input type="number" inputmode="numeric" id="cd-payday" min="1" max="28" value="${c.payDay||14}"></div>`:'<div></div>'}
     </div>
+    ${c.type==='credit'?(()=>{const ap=c.autoPre||defAutoPre();return`
+    <div class="field"><label class="cb-row"><input type="checkbox" id="cd-ap-on" ${ap.on?'checked':''}
+        onchange="syncCardDraft();renderCardModal()"><span>매주 자동 선결제</span></label>
+      <div class="tiny" style="margin:4px 0 0">💡 지정한 요일에 <b>미결제 잔액이 기준액 이상이면 전액을 미리 갚아요.</b> 갚고 나면 0이 되니, 결과적으로 <b>그 주에 쓴 만큼</b>을 매주 정리하게 됩니다.</div>
+      ${ap.on?`<div class="grid2" style="margin-top:10px">
+        <div class="field" style="margin-bottom:0"><label>결제 요일</label>
+          <select id="cd-ap-wd">${WEEKDAYS.map((w,i)=>`<option value="${i}" ${+ap.weekday===i?'selected':''}>${w}요일</option>`).join('')}</select></div>
+        <div class="field" style="margin-bottom:0"><label>기준 금액 (원)</label>
+          <input type="number" inputmode="numeric" id="cd-ap-min" value="${ap.min||''}" placeholder="300000"></div>
+      </div>
+      <div class="tiny" style="margin-top:6px">
+        ${c.id?`다음 예정 <b>${esc(mdLabel(nextPrepayDate(c)))}</b> (${WEEKDAYS[+ap.weekday||0]}요일)`:'저장하면 다음 지정 요일부터 동작해요'}
+        · 잔액이 모자라면 건너뛰고 다음에 다시 시도해요${ap.lastRun?` · 마지막 실행 ${esc(mdLabel(ap.lastRun))}`:''}</div>`:''}
+    </div>`})():''}
     <div class="field"><label>실적 구간 (선택 — 무실적 카드는 비워두세요)</label>
       <input id="cd-tiers" value="${esc(c.tiersText)}" placeholder="비워두면 무실적 카드">
       <div class="tiny" style="margin-top:4px">${tiersArr.length
@@ -6381,6 +6558,7 @@ function restoreVersion(id){
 /* ═════════ 시작 ═════════ */
 autoApplyFixed();
 autoApplySaving();
+autoPrepayCards();   // 지정 요일이 지났으면 자동 선결제
 recordScore();
 touchNetHist();
 fxRecord(fxRate());                 // 자동 갱신이 막혀도 하루 한 점은 남긴다
