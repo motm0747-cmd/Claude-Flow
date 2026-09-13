@@ -853,7 +853,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20260909-exempt';
+const APP_BUILD='20260913-entry';
 const KEY='claudeflow_v1';
 const store={
   ok:(()=>{try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true}catch(e){return false}})(),
@@ -882,6 +882,7 @@ function migrate(){
   S.goals=S.goals||[]; S.weekly=S.weekly||null;
   if(S.settings.dcaM===undefined)S.settings.dcaM=0;
   if(S.settings.buffer===undefined)S.settings.buffer=0;    // 통장에 남겨둘 돈(쓸 수 있는 돈에서 제외)
+  if(!S.settings.lastPay)S.settings.lastPay=null;          // 직전에 쓴 결제수단(다음 입력 기본값)
   if(S.settings.homeMore===undefined)S.settings.homeMore=false; // 홈 '더 보기' 펼침 여부
   if(S.settings.simReturn===undefined)S.settings.simReturn=6;
   if(S.settings.simExtra===undefined)S.settings.simExtra=0;
@@ -1804,7 +1805,15 @@ const sheetHead=t=>`<div class="sheet-head"><h3>${t}</h3><button class="x" oncli
 let txDraft={};
 function openTxModal(id){
   const t=id?S.tx.find(x=>x.id===id):null;
-  txDraft=t?{...t}:{id:null,type:'expense',date:todayStr(),amount:'',cat:'식비',memo:'',payKind:'card',payId:'',defended:false,months:1,noPerf:false,via:'',fromId:'',toId:''};
+  if(t){ txDraft={...t}; renderTxModal(); return; }
+  // 새 내역: 직전에 쓴 결제수단과 지금 시간대에 자주 쓰는 카테고리로 시작한다
+  const lp=(S.settings||{}).lastPay||{};
+  const alive=payAlive(lp.payKind,lp.payId);
+  const sg=suggestCat();
+  txDraft={id:null,type:'expense',date:todayStr(),amount:'',cat:sg.cat,memo:'',
+    payKind:alive?lp.payKind:'card',payId:alive?(lp.payId||''):'',
+    defended:false,months:1,noPerf:false,via:'',fromId:'',toId:'',
+    autoCat:true,autoPay:true,catWhy:sg.why};   // auto* = 아직 사용자가 직접 안 고른 상태
   renderTxModal();
 }
 function renderTxModal(){
@@ -1838,7 +1847,7 @@ function renderTxModal(){
   let payOpts='';
   if(d.type==='expense'){
     payOpts=`<div class="field"><label>결제수단</label>
-      <select id="tx-pay" onchange="syncTxDraft();renderTxModal()">
+      <select id="tx-pay" onchange="txDraft.autoPay=false;syncTxDraft();renderTxModal()">
         ${S.cards.map(c=>`<option value="card|${c.id}" ${d.payKind==='card'&&d.payId===c.id?'selected':''}>${esc(c.name)} (${c.type==='credit'?'신용':'체크'})</option>`).join('')}
         ${S.accounts.filter(a=>a.type==='checking').map(a=>`<option value="account|${a.id}" ${d.payKind==='account'&&d.payId===a.id?'selected':''}>${esc(a.name)} (계좌이체)</option>`).join('')}
         <option value="cash|" ${d.payKind==='cash'?'selected':''}>현금</option>
@@ -1854,10 +1863,16 @@ function renderTxModal(){
   openModal(`${sheetHead(isEdit?'내역 수정':'내역 추가')}
     ${seg}${dateAmt}
     <div class="field"><label>카테고리</label><div class="cat-grid">
-      ${cats.map(([e,n])=>`<div class="cat-cell ${d.cat===n?'on':''}" onclick="txDraft.cat='${n}';syncTxDraft();renderTxModal()"><div class="ce">${e}</div><div class="cl">${n}</div></div>`).join('')}
+      ${cats.map(([e,n])=>`<div class="cat-cell ${d.cat===n?'on':''}" onclick="syncTxDraft();txDraft.cat='${n}';txDraft.autoCat=false;renderTxModal()"><div class="ce">${e}</div><div class="cl">${n}</div></div>`).join('')}
     </div></div>
     ${payOpts}
-    <div class="field"><label>메모</label><input id="tx-memo" placeholder="예: 학식, 스터디카페" value="${esc(d.memo)}"></div>
+    <div class="field"><label>메모</label>
+      <input id="tx-memo" placeholder="예: 학식, 스터디카페" value="${esc(d.memo)}"
+        list="tx-memo-list" autocomplete="off" oninput="onMemoInput()">
+      <datalist id="tx-memo-list">${merchantMemory().slice(0,40)
+        .map(x=>`<option value="${esc(x.label)}">`).join('')}</datalist>
+      <div class="tiny" id="tx-memo-hint" style="margin-top:4px">${
+        d.autoCat&&d.catWhy?`💡 ${esc(d.catWhy)}로 시작했어요 — 바꾸면 그대로 기억해요`:''}</div></div>
     ${d.type==='expense'?`<div class="field"><label class="cb-row"><input type="checkbox" id="tx-def" ${d.defended?'checked':''}><span>계획된 지출 (과소비 경고에서 제외)</span></label></div>`:''}
     ${(isEdit&&d.type==='expense')?`<button class="btn ghost sm block" style="margin-bottom:8px" onclick="addQuickFromTx('${d.id}')">⚡ 빠른 입력에 추가</button>`:''}
     <div style="display:flex;gap:8px;margin-top:6px">
@@ -1896,6 +1911,94 @@ function payHint(){
   }
   if(d.payKind==='account')return`<div class="tiny" style="margin-top:5px">💡 선택한 계좌에서 즉시 차감됩니다.</div>`;
   return'';
+}
+/* ═════════ 입력 보조 — 직전 맥락 기억 ═════════
+ * 매일 쓰는 가계부에서 가장 큰 마찰은 분석이 아니라 '같은 걸 매번 다시 고르는 일'이다.
+ * 과거 기록에서 가맹점(메모)별로 어떤 카테고리·결제수단을 썼고 얼마였는지를 뽑아두고,
+ * 메모를 치는 순간 나머지를 채워준다. 사용자가 직접 고른 값은 절대 덮지 않는다. */
+let _mmCache=null, _mmVer='';
+function merchantMemory(){
+  const v=S.tx.length+'|'+(S.tx.length?S.tx[S.tx.length-1].id:'');
+  if(_mmVer===v&&_mmCache)return _mmCache;
+  const m=new Map();
+  // 최근 것에 더 무게를 준다 (예전에 쓰던 카드로 되돌아가지 않게)
+  S.tx.filter(t=>t.type==='expense'&&(t.memo||'').trim()).slice(-400).forEach((t,i,arr)=>{
+    const key=_pnorm(t.memo), w=1+i/arr.length;     // 뒤로 갈수록 가중치 ↑
+    let e=m.get(key);
+    if(!e){e={key,label:t.memo.trim(),cats:{},pays:{},amounts:[],n:0};m.set(key,e)}
+    e.label=t.memo.trim();                           // 표기는 가장 최근 것
+    e.cats[t.cat]=(e.cats[t.cat]||0)+w;
+    if(t.payKind)e.pays[`${t.payKind}|${t.payId||''}`]=(e.pays[`${t.payKind}|${t.payId||''}`]||0)+w;
+    e.amounts.push(t.amount); e.n++;
+  });
+  const top=o=>Object.entries(o).sort((a,b)=>b[1]-a[1])[0];
+  _mmCache=[...m.values()].map(e=>{
+    const c=top(e.cats), p=top(e.pays);
+    const [payKind,payId]=(p?p[0]:'|').split('|');
+    return{key:e.key,label:e.label,n:e.n,cat:c?c[0]:'',payKind,payId,
+      last:e.amounts[e.amounts.length-1],
+      fixed:e.amounts.every(x=>x===e.amounts[0])};
+  }).sort((a,b)=>b.n-a.n);
+  _mmVer=v; return _mmCache;
+}
+const merchantHit=memo=>{
+  const k=_pnorm(memo); if(!k)return null;
+  return merchantMemory().find(x=>x.key===k)||null;
+};
+/* 결제수단이 아직 살아 있는지 (지운 카드·계좌로 되살아나지 않게) */
+function payAlive(kind,id){
+  if(kind==='card')return !!cardById(id);
+  if(kind==='account')return !!accById(id);
+  return kind==='cash';
+}
+/* 시간대별로 자주 쓴 카테고리. 시각은 새로 기록되는 내역부터 쌓이므로,
+   자료가 모자라면 '최근 자주 쓴 카테고리'로 물러선다(없는 걸 지어내지 않게). */
+const HOUR_BUCKET=h=>h<5?'밤':h<11?'아침':h<15?'점심':h<18?'오후':h<22?'저녁':'밤';
+function suggestCat(){
+  const now=new Date(), b=HOUR_BUCKET(now.getHours());
+  const recent=S.tx.filter(t=>t.type==='expense').slice(-300);
+  const cnt={}, cntAll={};
+  recent.forEach(t=>{
+    cntAll[t.cat]=(cntAll[t.cat]||0)+1;
+    if(t.at&&HOUR_BUCKET(+String(t.at).slice(0,2))===b)cnt[t.cat]=(cnt[t.cat]||0)+1;
+  });
+  const pick=o=>Object.entries(o).sort((a,b)=>b[1]-a[1])[0];
+  const byHour=pick(cnt), all=pick(cntAll);
+  // 그 시간대 표본이 5건은 돼야 시간대 추천을 믿는다
+  if(byHour&&cnt[byHour[0]]>=5)return{cat:byHour[0],why:`${b}에 자주 쓰는 카테고리`};
+  if(all)return{cat:all[0],why:'최근 자주 쓰는 카테고리'};
+  return{cat:'식비',why:''};
+}
+/* 메모를 치는 동안 호출 — 아는 가맹점이면 카테고리·결제수단을 채운다.
+   ⚠️ 여기서 renderTxModal() 을 부르면 입력칸이 다시 그려져 포커스와 커서가 날아간다.
+      그래서 화면을 통째로 다시 그리지 않고 바뀐 부분만 직접 손댄다. */
+function onMemoInput(){
+  const el=$('tx-memo'), hint=$('tx-memo-hint'); if(!el)return;
+  txDraft.memo=el.value;
+  const hit=merchantHit(el.value);
+  if(!hit){ if(hint)hint.innerHTML=''; return; }
+  const filled=[];
+  if(txDraft.autoCat!==false&&hit.cat&&hit.cat!==txDraft.cat){
+    txDraft.cat=hit.cat;
+    document.querySelectorAll('#sheet .cat-cell').forEach(c=>
+      c.classList.toggle('on',(c.textContent||'').trim().endsWith(hit.cat)));
+    filled.push(`${CAT_EMO[hit.cat]||''} ${hit.cat}`);
+  }
+  const sel=$('tx-pay');
+  if(txDraft.autoPay!==false&&sel&&hit.payKind&&payAlive(hit.payKind,hit.payId)){
+    const v=`${hit.payKind}|${hit.payId||''}`;
+    if([...sel.options].some(o=>o.value===v)&&sel.value!==v){
+      sel.value=v; txDraft.payKind=hit.payKind; txDraft.payId=hit.payId||'';
+      filled.push(sel.options[sel.selectedIndex].text.replace(/\s*\(.*\)$/,''));
+    }
+  }
+  // 금액이 비어 있으면 최근 금액을 제안(자동으로 넣지는 않는다 — 틀린 금액이 조용히 저장되면 곤란)
+  const amtEl=$('tx-amt');
+  const amtTip=(amtEl&&!amtEl.value&&hit.last)?` · 지난번 ${fmt(hit.last)}`:'';
+  if(hint)hint.innerHTML=filled.length
+    ? `<span style="color:var(--green)">✨ ${esc(hit.label)} — ${filled.map(esc).join(' · ')} 자동 선택${amtTip}</span>`
+    : (amtTip?`<span>${esc(hit.label)}${amtTip}</span>`:'');
+  txPickHint();
 }
 function syncTxDraft(){
   const g=$;
@@ -1949,11 +2052,20 @@ function saveTx(){
     const old=S.tx.find(x=>x.id===d.id);
     applyBalance(old,-1);                       // 원래 환율로 되돌리고
     const keepFx=old.fxAt||fxRate();
-    Object.assign(old,{...d,amount:amt,fxAt:keepFx});
+    const {autoCat,autoPay,catWhy,...clean}=d;  // 입력 보조용 임시 표시 제거
+    Object.assign(old,{...clean,amount:amt,fxAt:keepFx});
     applyBalance(old,1);                        // 같은 환율로 다시 반영
   }else{
+    const now=new Date();
     const t={...d,id:uid(),amount:amt,fxAt:fxRate()};
+    delete t.autoCat; delete t.autoPay; delete t.catWhy;   // 입력 보조용 임시 표시는 저장하지 않는다
+    // 시각을 남겨두면 '이 시간대에 뭘 쓰는지'를 다음부터 추천할 수 있다
+    if(d.date===todayStr())t.at=`${pad(now.getHours())}:${pad(now.getMinutes())}`;
     S.tx.push(t);applyBalance(t,1);
+  }
+  // 다음 입력은 이번에 쓴 결제수단으로 시작한다
+  if(d.type==='expense'&&d.payKind){
+    S.settings.lastPay={payKind:d.payKind,payId:d.payId||''};
   }
   commit('저장했어요');
 }
@@ -3260,25 +3372,34 @@ function applyPrepay(c,list,how,date){
     n:list.length,how:how||'manual'}]).slice(-60);
   return amt;
 }
-/* 이번 주의 지정 요일 날짜 (일요일 시작) */
+/* 가장 최근에 지나간(또는 오늘인) 지정 요일.
+   ⚠️ '이번 주(일요일 시작)의 지정 요일'로 잡으면 안 된다 — 토요일 설정인데 일요일에
+      앱을 열면 그 요일이 '6일 뒤'로 계산돼서 어제 몫을 통째로 건너뛴다. */
 function weekdayDate(wd){
-  return addDays(todayStr(),(Math.max(0,Math.min(6,+wd||0)))-new Date().getDay());
+  const w=Math.max(0,Math.min(6,+wd||0));
+  return addDays(todayStr(),-(((new Date().getDay()-w)%7+7)%7));
 }
-/* 다음 실행 예정일 — 이번 주 몫이 끝났으면 다음 주 */
+/* 기능을 켜기 전에 지나간 요일까지 소급해서 출금하면 안 된다. 켤 때 '어제 처리한 것'으로
+   기준선을 박아두면 — 오늘이 지정 요일이면 오늘부터 돌고, 이미 지난 요일은 건너뛴다. */
+const preBase=ap=>(ap&&ap.lastRun)||addDays(todayStr(),-1);
+function anchorAutoPre(ap){ if(ap&&ap.on&&!ap.lastRun)ap.lastRun=addDays(todayStr(),-1); return ap; }
+/* 다음 실행 예정일 — 최근 몫을 이미 처리했으면 그다음 주 */
 function nextPrepayDate(c){
   const ap=c.autoPre||defAutoPre(), due=weekdayDate(ap.weekday);
-  return (due<todayStr()||(ap.lastRun||'')>=due)?addDays(due,7):due;
+  return (preBase(ap)>=due)?addDays(due,7):due;
 }
 /* 앱을 열 때 도는 자동 선결제 */
 function autoPrepayCards(){
   const today=todayStr();
   const done=[], skipped=[];
+  let dirty=false;
   S.cards.forEach(c=>{
     if(c.type!=='credit')return;
     const ap=c.autoPre; if(!ap||!ap.on)return;
+    if(!ap.lastRun){ anchorAutoPre(ap); dirty=true; }   // 켜 둔 채로 넘어온 예전 데이터
     const due=weekdayDate(ap.weekday);
-    if(due>today)return;                       // 이번 주 지정 요일이 아직 안 왔다
-    if((ap.lastRun||'')>=due)return;           // 이번 주 몫은 이미 처리했다
+    if(due>today)return;                       // 지정 요일이 아직 안 왔다
+    if(ap.lastRun>=due)return;                 // 그 몫은 이미 처리했다
     const list=prepayables(c), amt=prepayAmount(c,list);
     if(amt.gross<(+ap.min||0)){                // 기준 미달 — 카드사도 이 주는 그냥 넘어간다
       ap.lastRun=due; return;
@@ -3290,10 +3411,10 @@ function autoPrepayCards(){
     ap.lastRun=due;
     done.push(`${c.name} ${fmtK(amt.net)}원`);
   });
-  if(done.length||skipped.length){
+  if(done.length||skipped.length||dirty){
     save();
     if(done.length)toast(`자동 선결제 — ${done.join(' · ')}`);
-    else toast(`자동 선결제 보류 — ${skipped[0]}`);
+    else if(skipped.length)toast(`자동 선결제 보류 — ${skipped[0]}`);
   }
 }
 
@@ -3381,6 +3502,7 @@ function syncCardDraft(){
     ap.on=g('cd-ap-on').checked;
     if(g('cd-ap-wd'))ap.weekday=Math.max(0,Math.min(6,+g('cd-ap-wd').value||0));
     if(g('cd-ap-min'))ap.min=Math.max(0,Math.round(+g('cd-ap-min').value||0));
+    anchorAutoPre(ap);        // 켠 시점 이전 요일까지 소급 출금하지 않도록
   }
 }
 function cdType(t){syncCardDraft();cardDraft.type=t;renderCardModal()}
@@ -6206,20 +6328,30 @@ function repairFixedMismatch(){
 }
 
 /* ═════════ 빠른 입력 (자주 쓰는 내역) ═════════ */
-const quickKey=q=>`${q.cat}|${q.amount}|${q.memo||''}`;
+/* 항목의 신원. 금액은 넣지 않는다 — 넣으면 금액이 조금만 달라져도
+   '숨긴 항목'이 되살아나고 같은 가맹점이 중복 등록된다. */
+const quickKey=q=>`${q.cat}|${_pnorm(q.memo||'')}`;
 let quickEdit=false;
 function quickList(){
   const hide=S.quickHide||[];
   const q=(S.quick||[]).filter(x=>!hide.includes(quickKey(x)));
   if(q.length) return q.slice(0,6);
-  // 즐겨찾기가 없으면 최근 지출에서 자동 추천(같은 카테고리+금액 조합 빈도순)
+  /* 즐겨찾기가 없으면 최근 지출에서 자동 추천.
+     ⚠️ 예전엔 금액까지 같아야 한 항목으로 봤는데, 커피처럼 매번 몇백 원씩 다른 지출은
+        영영 2회에 도달하지 못했다. 이제 '가맹점+카테고리'로 묶고 금액은 최근값을 쓴다.
+        금액이 들쭉날쭉한 항목은 바로 기록하지 않고 입력창을 열어 확인받는다. */
   const m={};
-  S.tx.filter(t=>t.type==='expense').slice(-60).forEach(t=>{
-    const k=`${t.cat}|${t.amount}|${t.memo||''}`;
-    m[k]=m[k]||{cat:t.cat,amount:t.amount,memo:t.memo||'',payKind:t.payKind,payId:t.payId,n:0};
-    m[k].n++;
+  S.tx.filter(t=>t.type==='expense'&&(t.memo||'').trim()).slice(-120).forEach(t=>{
+    const k=`${t.cat}|${_pnorm(t.memo)}`;
+    m[k]=m[k]||{cat:t.cat,memo:t.memo.trim(),payKind:t.payKind,payId:t.payId,amounts:[],n:0};
+    m[k].memo=t.memo.trim(); m[k].payKind=t.payKind; m[k].payId=t.payId;
+    m[k].amounts.push(t.amount); m[k].n++;
   });
-  return Object.values(m).filter(x=>x.n>=2&&!hide.includes(quickKey(x)))
+  return Object.values(m).map(x=>({
+      cat:x.cat,memo:x.memo,payKind:x.payKind,payId:x.payId,n:x.n,
+      amount:x.amounts[x.amounts.length-1],                 // 가장 최근 금액
+      fixed:x.amounts.every(a=>a===x.amounts[0])            // 늘 같은 금액인가
+    })).filter(x=>x.n>=2&&!hide.includes(quickKey(x)))
     .sort((a,b)=>b.n-a.n).slice(0,6);
 }
 function renderQuick(){
@@ -6242,9 +6374,11 @@ function renderQuick(){
              ${CAT_EMO[q.cat]||'💸'} ${esc(q.memo||q.cat)} <b class="num">${fmtK(q.amount)}</b>
              <span style="color:var(--danger);font-weight:800;cursor:pointer;padding:0 2px" onclick="delQuick(${i})">✕</span></span>`
         : `<button class="btn ghost sm" style="text-align:left" onclick="runQuick(${i})">
-             ${CAT_EMO[q.cat]||'💸'} ${esc(q.memo||q.cat)} <b class="num">${fmtK(q.amount)}</b></button>`).join('')}
+             ${CAT_EMO[q.cat]||'💸'} ${esc(q.memo||q.cat)} <b class="num">${q.fixed===false?'~':''}${fmtK(q.amount)}</b></button>`).join('')}
     </div>
-    <div class="tiny" style="margin-top:7px">${quickEdit?'✕ 를 눌러 지우세요. 자동 추천 항목은 숨김 처리돼요.':'탭하면 오늘 날짜로 기록돼요'}</div>`;
+    <div class="tiny" style="margin-top:7px">${quickEdit
+      ?'✕ 를 눌러 지우세요. 자동 추천 항목은 숨김 처리돼요.'
+      :`탭하면 오늘 날짜로 기록돼요${list.some(q=>q.fixed===false)?' · <b>~</b> 는 금액이 매번 달라서 입력창이 열려요':''}`}</div>`;
 }
 function toggleQuickEdit(){ quickEdit=!quickEdit; renderQuick(); }
 function delQuick(i){
@@ -6261,18 +6395,30 @@ function resetQuickHidden(){
 }
 function runQuick(i){
   const q=quickList()[i]; if(!q)return;
+  // 금액이 매번 다른 항목은 조용히 틀린 값으로 기록되면 안 되니 확인받는다
+  if(q.fixed===false){
+    txDraft={id:null,type:'expense',date:todayStr(),amount:String(q.amount),cat:q.cat,memo:q.memo||'',
+      payKind:q.payKind||'cash',payId:q.payId||'',defended:false,months:1,noPerf:false,via:'',
+      fromId:'',toId:'',autoCat:false,autoPay:false,catWhy:''};
+    renderTxModal();
+    const el=$('tx-amt'); if(el){el.focus();el.select();}
+    return;
+  }
   const t={id:uid(),type:'expense',date:todayStr(),amount:q.amount,cat:q.cat,memo:q.memo||'',
     payKind:q.payKind||'cash',payId:q.payId||'',defended:false};
   if(t.payKind==='card'&&!cardById(t.payId)){t.payKind='cash';t.payId=''}
   if(t.payKind==='account'&&!accById(t.payId)){t.payKind='cash';t.payId=''}
   if(t.payKind==='card'){ const c=cardById(t.payId); if(c&&c.type==='credit'){t.months=1;t.paidPortions=0} }
+  const now=new Date();
+  t.at=`${pad(now.getHours())}:${pad(now.getMinutes())}`;
   S.tx.push(t); applyBalance(t,1);
+  if(t.payKind)S.settings.lastPay={payKind:t.payKind,payId:t.payId||''};
   save(); renderAll(); toast(`${q.memo||q.cat} ${fmt(q.amount)} 기록했어요`);
 }
 function addQuickFromTx(id){
   const t=S.tx.find(x=>x.id===id); if(!t||t.type!=='expense')return toast('지출 내역만 추가할 수 있어요');
   S.quick=S.quick||[];
-  if(S.quick.some(q=>q.cat===t.cat&&q.amount===t.amount&&(q.memo||'')===(t.memo||'')))return toast('이미 빠른 입력에 있어요');
+  if(S.quick.some(q=>quickKey(q)===quickKey(t)))return toast('이미 빠른 입력에 있어요');
   const item={cat:t.cat,amount:t.amount,memo:t.memo||'',payKind:t.payKind,payId:t.payId};
   S.quickHide=(S.quickHide||[]).filter(k=>k!==quickKey(item));   // 지웠던 항목이면 숨김 해제
   S.quick.unshift(item);
