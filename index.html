@@ -143,6 +143,19 @@ header{display:flex;align-items:center;justify-content:space-between;padding:20p
 .sec-title{font-size:var(--t-sm);font-weight:700;color:var(--faint);letter-spacing:.02em;
   margin:22px 2px 9px;display:flex;justify-content:space-between;align-items:center;gap:10px}
 .sec-title .link{color:var(--terra-deep);font-weight:600;font-size:var(--t-sm);cursor:pointer}
+/* 자산 탭 묶음 머리 — 눌러서 접는다. 하위 섹션 제목보다 한 단계 위로 보이게 */
+.ag-head{font-size:var(--t-base);color:var(--ink);font-weight:800;letter-spacing:0;
+  margin:26px 2px 4px;cursor:pointer;user-select:none;justify-content:flex-start;gap:9px}
+.ag-head:first-child{margin-top:18px}
+.ag-head .link{color:var(--sub);font-weight:700;display:flex;align-items:center;gap:7px}
+.ag-head .ag-caret{font-size:.8em;opacity:.75}
+.ag-head+.sec-title{margin-top:12px}
+/* 아직 안 쓰는 분류는 목록 대신 이 줄에만 남는다 */
+.add-row{display:flex;flex-wrap:wrap;gap:7px;margin:10px 2px 4px}
+.add-chip{border:1px dashed var(--line2);background:transparent;border-radius:var(--r-full);
+  padding:7px 13px;font-family:inherit;font-size:var(--t-sm);font-weight:600;color:var(--sub);
+  cursor:pointer;transition:background .16s,color .16s,border-color .16s}
+.add-chip:active{background:var(--fill);transform:scale(.96)}
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .muted{color:var(--sub);font-size:var(--t-md)}
 .tiny{color:var(--faint);font-size:var(--t-xs);line-height:1.6;text-wrap:pretty}
@@ -432,7 +445,7 @@ details.acc .acc-body{padding:0 16px 14px}
 .icon-btn:active,.cal-nav button:active{background:var(--fill);transform:scale(.94)}
 .link{transition:opacity .14s;cursor:pointer}
 .link:active{opacity:.5}
-.wi-preset button:active,.sheet-head .x:active{opacity:.65;transform:scale(.94)}
+.sheet-head .x:active{opacity:.65;transform:scale(.94)}
 .score-chip:active{transform:scale(.97)}
 .fx-chip:active{opacity:.65}
 /* 마우스가 있는 기기에서만 hover — 터치에서 잔상이 남지 않게 */
@@ -445,6 +458,8 @@ details.acc .acc-body{padding:0 16px 14px}
   .tx:hover,.asset-item:hover{background:var(--fill)}
   .icon-btn:hover,.cal-nav button:hover{background:var(--fill);color:var(--ink)}
   .rm-chip:hover:not(.on),.ct-chip:hover:not(.on){border-color:var(--line2);color:var(--ink)}
+  .add-chip:hover{border-color:var(--terra);color:var(--terra-deep);border-style:solid}
+  .ag-head:hover .link{color:var(--ink)}
   .score-chip:hover{box-shadow:var(--e2)}
   .fab:hover{background:var(--terra-deep);box-shadow:0 8px 24px rgba(217,119,87,.4)}
   .sheet-head .x:hover{background:var(--fill-3)}
@@ -459,8 +474,8 @@ details.acc .acc-body{padding:0 16px 14px}
   font-family:inherit;font-size:var(--t-md);font-weight:600;color:var(--sub);cursor:pointer;
   transition:background .18s var(--ease),color .18s,box-shadow .18s}
 .view-seg button.on{background:var(--surface);color:var(--ink);box-shadow:var(--e1)}
-.day-group{margin-bottom:6px}
-.day-head{display:flex;justify-content:space-between;align-items:baseline;padding:11px 4px 7px;
+.day-group{margin-bottom:2px}
+.day-head{display:flex;justify-content:space-between;align-items:baseline;padding:9px 4px 5px;
   position:sticky;top:0;background:var(--bg);z-index:2;gap:10px}
 .day-head .d-date{font-weight:700;font-size:var(--t-md)}
 .day-head .d-sum{font-size:var(--t-sm);color:var(--sub);white-space:nowrap}
@@ -514,15 +529,6 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
   color:var(--sub);cursor:pointer;white-space:nowrap;
   transition:background .16s,color .16s,border-color .16s}
 .horizon-seg button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
-.wi-preset{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
-.wi-preset button{border:1px solid var(--line2);background:var(--surface);border-radius:var(--r-full);
-  padding:6px 12px;font-family:inherit;font-size:var(--t-sm);font-weight:600;cursor:pointer;color:var(--ink);
-  transition:background .16s,transform .12s var(--ease)}
-.wi-verdict{border-radius:var(--r-md);padding:13px 14px;margin-top:12px;font-size:var(--t-md);
-  font-weight:600;line-height:1.55}
-.wi-ok{background:var(--green-soft);color:var(--green)}
-.wi-warn{background:var(--gold-soft);color:var(--gold)}
-.wi-bad{background:var(--terra-soft);color:var(--terra-deep)}
 
 /* ── 받을 돈 · 빌린 돈 ── */
 .debt-row{display:flex;align-items:center;gap:11px;padding:11px 8px;margin:0 -8px;
@@ -597,6 +603,10 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
   .wordmark{font-size:1.5rem}
   #view-home,#view-assets,#card-list{column-count:2;column-gap:20px}
   #view-home>*,#view-assets>*,#card-list>*{break-inside:avoid;-webkit-column-break-inside:avoid}
+  /* 자산 섹션은 한 겹 더 안쪽에 있으므로 직접 단(column)에 흘려보낸다 */
+  #asset-groups{display:contents}
+  #asset-groups>*{break-inside:avoid;-webkit-column-break-inside:avoid}
+  .ag-head{column-span:all;-webkit-column-span:all;break-before:column}
   .sec-title{break-after:avoid}
   .hero,#storage-banner,#sync-banner,#digest-slot,#brief-slot,#report-banner,#dca-banner,
   #perf-banner,#warn-slot{column-span:all;-webkit-column-span:all}
@@ -682,8 +692,6 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
     <!-- ③ 이번 달 흐름 -->
     <div class="sec-title">이번 달 흐름</div>
     <div class="card tight" id="budget-card"></div>
-    <div class="card tight" id="smart-gauge"></div>
-    <div class="card tight" id="forecast-card"></div>
 
     <div class="sec-title">기록 <span class="link" onclick="switchView('cal')">전체 보기</span></div>
     <div class="card tight" id="quick-card"></div>
@@ -701,7 +709,6 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
   <!-- ─────────── 캘린더 ─────────── -->
   <div class="view" id="view-cal">
     <div class="view-seg" id="tx-viewseg">
-      <button data-m="cal" onclick="setTxView('cal')">달력</button>
       <button data-m="list" onclick="setTxView('list')">날짜별</button>
       <button data-m="cat" onclick="setTxView('cat')">카테고리별</button>
     </div>
@@ -731,38 +738,30 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
       </div>
       <div id="sf-result"></div>
     </div>
-    <div id="cal-wrap"><div class="card">
-      <div class="cal-head">
-        <div class="m-label" id="cal-label"></div>
-        <div class="cal-nav">
-          <button onclick="calMove(-1)" aria-label="이전 달">‹</button>
-          <button onclick="calMove(1)" aria-label="다음 달">›</button>
+    <div id="cal-wrap">
+      <div class="card">
+        <div class="cal-head">
+          <div class="m-label" id="cal-label"></div>
+          <div class="cal-nav">
+            <button onclick="calMove(-1)" aria-label="이전 달">‹</button>
+            <button onclick="calMove(1)" aria-label="다음 달">›</button>
+          </div>
+        </div>
+        <div id="cal-box">
+          <div class="cal-grid" id="cal-grid"></div>
+          <div class="heat-legend">적음 <i style="background:var(--fill)"></i><i style="background:rgba(217,119,87,.25)"></i><i style="background:rgba(217,119,87,.55)"></i><i style="background:rgba(217,119,87,.9)"></i> 많음</div>
+        </div>
+        <div class="divider"></div>
+        <div class="row muted num" id="cal-summary"></div>
+        <div class="seg" style="margin-top:12px">
+          <button id="lf-all" onclick="setLstFilter('')">전체</button>
+          <button id="lf-expense" onclick="setLstFilter('expense')">지출</button>
+          <button id="lf-income" onclick="setLstFilter('income')">수입</button>
         </div>
       </div>
-      <div class="cal-grid" id="cal-grid"></div>
-      <div class="heat-legend">적음 <i style="background:var(--fill)"></i><i style="background:rgba(217,119,87,.25)"></i><i style="background:rgba(217,119,87,.55)"></i><i style="background:rgba(217,119,87,.9)"></i> 많음</div>
-      <div class="divider"></div>
-      <div class="row muted num" id="cal-summary"></div>
+      <div class="sec-title" id="cal-list-title">이번 달 내역 <span class="link" id="cal-clear" style="display:none" onclick="clearDaySel()">전체 보기</span></div>
+      <div id="lst-body"></div>
     </div>
-    <div class="sec-title" id="cal-list-title">이번 달 내역 <span class="link" id="cal-clear" style="display:none" onclick="clearDaySel()">필터 해제</span></div>
-    <div class="card tight" id="cal-tx"></div>
-  </div>
-  <div id="list-wrap" style="display:none">
-    <div class="card tight" style="margin-bottom:12px">
-      <div class="row" style="gap:8px">
-        <button class="btn ghost sm" onclick="lstMove(-1)">‹</button>
-        <b id="lst-label" style="flex:1;text-align:center;font-size:.95rem"></b>
-        <button class="btn ghost sm" onclick="lstMove(1)">›</button>
-      </div>
-      <div class="seg" style="margin-top:10px">
-        <button id="lf-all" onclick="setLstFilter('')">전체</button>
-        <button id="lf-expense" onclick="setLstFilter('expense')">지출</button>
-        <button id="lf-income" onclick="setLstFilter('income')">수입</button>
-      </div>
-      <div class="row" style="margin-top:10px" id="lst-summary"></div>
-    </div>
-    <div id="lst-body"></div>
-  </div>
   </div>
 
   <!-- ─────────── 자산 ─────────── -->
@@ -775,30 +774,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
       <button class="btn ghost sm" id="ord-btn" style="margin-top:10px" onclick="toggleOrd()">순서 변경</button>
     </div>
     <div class="card tight" id="alloc-card"></div>
-    <div class="sec-title">입출금 · 현금성 <span class="link" onclick="openAccModal(null,'checking')">+ 추가</span></div>
-    <div class="card tight" id="list-checking"></div>
-    <div class="sec-title">예금 <span class="link" onclick="openAccModal(null,'deposit')">+ 추가</span></div>
-    <div class="card tight" id="list-deposit"></div>
-    <div class="sec-title">적금 · 묶인 돈 <span class="link" onclick="openAccModal(null,'saving')">+ 추가</span></div>
-    <div class="card tight" id="list-saving"></div>
-    <div class="sec-title">주택청약 <span class="link" onclick="openAccModal(null,'housing')">+ 추가</span></div>
-    <div class="card tight" id="list-housing"></div>
-    <div class="card tight" id="housing-card"></div>
-    <div class="sec-title">투자 <span class="link" onclick="openAccModal(null,'invest')">+ 추가</span></div>
-    <div id="inv-alert"></div>
-    <div class="card tight" id="list-invest"></div>
-    <div class="card tight" id="invperf-card"></div>
-    <div class="card" id="dca-card"></div>
-    <div class="sec-title">저축 목표 <span class="link" onclick="openGoalModal()">+ 추가</span></div>
-    <div class="card tight" id="list-goals"></div>
-    <div class="sec-title">잔액 대조 <span class="link" onclick="openReconModal()">점검하기</span></div>
-    <div class="card tight" id="recon-card"></div>
-    <div class="sec-title">받을 돈 · 빌린 돈 <span class="link" onclick="openDebtModal()">+ 추가</span></div>
-    <div class="card tight" id="list-debts"></div>
-    <div class="sec-title">고정 수입 <span class="link" onclick="openFixedModal(null,'income')">+ 추가</span></div>
-    <div class="card tight" id="list-fixed-in"></div>
-    <div class="sec-title">고정비 <span class="link" onclick="openFixedModal(null,'expense')">+ 추가</span></div>
-    <div class="card tight" id="list-fixed"></div>
+    <div id="asset-groups"></div>
   </div>
 
   <!-- ─────────── 카드 ─────────── -->
@@ -821,16 +797,26 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
   <!-- ─────────── 리포트 ─────────── -->
   <div class="view" id="view-report">
-    <div class="card" id="flow-card" style="margin-top:4px"></div>
-    <div class="card" id="nethist-card"></div>
-    <div class="card" id="sim-card"></div>
-    <div class="card" id="whatif-card"></div>
-    <div class="card" id="trend-card"></div>
-    <div class="card" id="income-card"></div>
-    <div class="card" id="profile-card"></div>
-    <div class="sec-title">월별 리포트</div>
-    <div class="rep-month" id="rep-months"></div>
-    <div id="rep-body" style="margin-top:12px"></div>
+    <div class="view-seg" id="rep-viewseg" style="margin-top:4px">
+      <button data-m="sum" onclick="setRepView('sum')">요약</button>
+      <button data-m="fore" onclick="setRepView('fore')">예측</button>
+      <button data-m="style" onclick="setRepView('style')">성향</button>
+    </div>
+    <div id="repview-sum">
+      <div class="card" id="flow-card"></div>
+      <div class="card" id="trend-card"></div>
+      <div class="sec-title">월별 리포트</div>
+      <div class="rep-month" id="rep-months"></div>
+      <div id="rep-body" style="margin-top:12px"></div>
+    </div>
+    <div id="repview-fore" style="display:none">
+      <div class="card" id="nethist-card"></div>
+      <div class="card" id="sim-card"></div>
+    </div>
+    <div id="repview-style" style="display:none">
+      <div class="card" id="income-card"></div>
+      <div class="card" id="profile-card"></div>
+    </div>
   </div>
 </div>
 
@@ -853,7 +839,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20260913-entry';
+const APP_BUILD='20260914-tidy';
 const KEY='claudeflow_v1';
 const store={
   ok:(()=>{try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true}catch(e){return false}})(),
@@ -922,8 +908,10 @@ function migrate(){
   if(_fx.err===undefined)_fx.err=''; if(_fx.tried===undefined)_fx.tried=''; if(_fx.src===undefined)_fx.src='';
   if(S.settings.aiErr===undefined)S.settings.aiErr=''; if(S.settings.aiErrAt===undefined)S.settings.aiErrAt='';
   if(S.settings.profM===undefined)S.settings.profM=3;
-  if(!S.settings.txView)S.settings.txView='cal';
+  // '달력'과 '날짜별'을 한 화면으로 합치면서 예전 설정값은 '날짜별'로 옮긴다
+  if(S.settings.txView!=='cat')S.settings.txView='list';
   if(!S.settings.cardView)S.settings.cardView='manage';
+  if(!S.settings.repView)S.settings.repView='sum';
   S.accounts.forEach(a=>{
     if(!a.cur)a.cur='KRW';
     if(a.type==='invest'){
@@ -1384,7 +1372,7 @@ function switchView(v){
 }
 function renderAll(){
   if(curView==='home')renderHome();
-  if(curView==='cal'){ if(txView==='cal')renderCal(); else renderList(); }
+  if(curView==='cal')renderCal();
   if(curView==='assets')renderAssets();
   if(curView==='cards'){ if(cardView==='manage')renderCards(); else if(cardView==='bill')renderBills(); else renderCardDetail(); }
   if(curView==='report')renderReport();
@@ -1564,8 +1552,6 @@ function renderHome(){
   renderWish();
   renderAnomaly();
   renderWarn();
-  renderSmartGauge();
-  renderForecast();
   renderWeekly();
   renderDcaBanner();
   renderPerfBanner();
@@ -1632,7 +1618,7 @@ function toggleHomeMore(){
   S.settings.homeMore=!(S.settings&&S.settings.homeMore);
   save(); applyHomeMore();
 }
-function goMakeReport(ym){switchView('report');selectRepMonth(ym);genReport(ym);}
+function goMakeReport(ym){switchView('report');setRepView('sum');selectRepMonth(ym);genReport(ym);}
 function payLabel(t){
   if(t.payKind==='card'){const c=cardById(t.payId);return c?c.name:'카드'}
   if(t.payKind==='account'){const a=accById(t.payId);return a?a.name:'계좌'}
@@ -1697,22 +1683,8 @@ function defendToday(){ // 오늘 최대 지출 1건을 '계획된 지출'로 �
   toast(`'${list[0].memo||list[0].cat}' ${fmt(list[0].amount)}을 방어했어요`);
   renderHome();
 }
-function renderSmartGauge(){
-  const o=overspendInfo();
-  const max=Math.max(o.avg*2,o.spent,1);
-  const pct=Math.min(100,o.spent/max*100);
-  const cls=o.over?'over-fill':(o.avg>0&&o.spent>o.avg?'warn-fill':'');
-  const markPos=o.avg>0?Math.min(100,o.avg*1.7/max*100):100;
-  $('smart-gauge').innerHTML=`
-    <div class="row" style="margin-bottom:8px">
-      <div style="font-weight:800;font-size:.9rem">오늘의 지출 게이지</div>
-      <div class="muted num">${fmt(todaySpend(false))} / 일평균 ${fmt(o.avg)}</div>
-    </div>
-    <div class="gauge-track"><div class="gauge-fill ${cls}" style="width:${pct}%"></div><div class="gauge-marker" style="left:${markPos}%"></div></div>
-    <div class="tiny" style="margin-top:6px">▍표시선(평균×1.7)을 넘으면 과소비 경고가 떠요${o.avg<=0?' · 기록이 쌓이면 평균이 계산됩니다':''}</div>`;
-}
-
-/* ── 소비 예측 ── */
+/* 이번 달 지출 예상치 — 월별 리포트에서 쓴다.
+   (홈의 '소비 예측' 카드는 걷어냈지만, 계산 자체는 리포트가 계속 쓴다) */
 function forecastMonth(){
   const ym=thisYM(), day=new Date().getDate(), dim=daysIn(ym);
   const m=monthTx(ym).filter(t=>t.type==='expense');
@@ -1724,38 +1696,21 @@ function forecastMonth(){
   const remainFixed=fixedOf('expense').filter(f=>fixedActiveOn(f,ym)&&!appliedIds.has(f.id)).reduce((s,f)=>s+f.amount,0);
   return{spent,predicted:spent+pace*(dim-day)+remainFixed,day,dim};
 }
-function renderForecast(){
-  const f=forecastMonth(), pmT=totals(prevYM(thisYM()));
-  const ref=pmT.exp>0?pmT.exp:null;
-  let cmp='';
-  if(ref){
-    const d=(f.predicted-ref)/ref*100;
-    cmp=`지난달 대비 <b class="${d<=0?'pos':'neg'}">${d>=0?'+':''}${d.toFixed(0)}%</b> 페이스`;
-  }
-  const pct=ref?Math.min(100,f.predicted/ref*100):Math.min(100,f.spent/Math.max(f.predicted,1)*100);
-  $('forecast-card').innerHTML=`
-    <div class="row" style="margin-bottom:8px">
-      <div style="font-weight:800;font-size:.9rem">이번 달 소비 예측 <span class="badge gold">AI 페이스 분석</span></div>
-    </div>
-    <div class="row">
-      <div><div class="tiny">현재 지출 (${f.day}일차)</div><div class="num" style="font-weight:800">${fmt(f.spent)}</div></div>
-      <div style="text-align:right"><div class="tiny">${daysIn(thisYM())}일 예상</div><div class="num" style="font-weight:800;color:var(--terra-deep)">${fmt(f.predicted)}</div></div>
-    </div>
-    <div class="gauge-track" style="margin-top:10px"><div class="gauge-fill ${ref&&f.predicted>ref?'over-fill':'warn-fill'}" style="width:${pct}%"></div></div>
-    <div class="tiny" style="margin-top:6px">${cmp||'지난달 데이터가 쌓이면 비교 분석을 제공해요'}${accruedDiscount(thisYM())>0?` · 청구할인 −${fmtK(accruedDiscount(thisYM()))}원 반영됨`:''}</div>`;
-}
-
-/* ═════════ 캘린더 히트맵 ═════════ */
+/* ═════════ 내역 탭 — 달력 + 목록 ═════════
+ * 예전엔 '달력'과 '날짜별'이 따로였는데, 둘 다 같은 달의 같은 내역을 보여주면서
+ * 달 이동 상태만 따로 굴러 서로 다른 달을 가리키는 일까지 있었다. 한 화면으로 합쳤다.
+ * 달력에서 날짜를 누르면 아래 목록이 그 날로 좁혀진다. */
 let calYM=thisYM(), selDay=null;
 function calMove(d){
   const[y,m]=calYM.split('-').map(Number);
   const nd=new Date(y,m-1+d,1);
-  calYM=`${nd.getFullYear()}-${pad(nd.getMonth()+1)}`;selDay=null;renderCal();
+  calYM=`${nd.getFullYear()}-${pad(nd.getMonth()+1)}`;selDay=null;lstAll=false;renderCal();
 }
 function selectToday(){calYM=thisYM();selDay=todayStr();renderCal();}
 function clearDaySel(){selDay=null;renderCal();}
 function renderCal(){
   if(typeof hasSearch==='function'&&$('sq')&&hasSearch()){onSearch();return}
+  applyTxView();
   $('cal-label').textContent=ymLabel(calYM);
   const[y,m]=calYM.split('-').map(Number);
   const first=new Date(y,m-1,1).getDay(), dim=daysIn(calYM);
@@ -1782,19 +1737,28 @@ function renderCal(){
   const t=totals(calYM);
   $('cal-summary').innerHTML=
     `<span>수입 <b class="pos">+${fmtK(t.inc)}원</b></span><span>지출 <b class="neg">−${fmtK(t.exp)}원</b></span><span>수지 <b class="${t.bal>=0?'pos':'neg'}">${t.bal>=0?'+':'−'}${fmtK(Math.abs(t.bal))}원</b></span>`;
-  // 목록
+  ['','expense','income'].forEach(f=>{
+    const el=$('lf-'+(f||'all')); if(el)el.classList.toggle('on',lstFilter===f);
+  });
+  // ── 목록 ──
   const listT=$('cal-list-title').firstChild;
-  $('cal-clear').style.display=selDay?'inline':'none';
-  let list;
-  if(selDay){list=dayTx(selDay);listT.textContent=`${+selDay.slice(5,7)}월 ${+selDay.slice(8)}일 내역 `;}
-  else{list=monthTx(calYM).sort((a,b)=>b.date.localeCompare(a.date));listT.textContent=`${ymLabel(calYM)} 내역 `;}
-  const CAP=150;
-  $('cal-tx').innerHTML=list.length
-    ? list.slice(0,CAP).map(txRow).join('')
-      +(list.length>CAP?`<div class="tiny" style="text-align:center;padding:10px">최근 ${CAP}건만 표시 · 전체 ${list.length}건은 <b style="color:var(--terra)">날짜별·카테고리별</b> 보기나 검색을 이용하세요</div>`:'')
-    : `<div class="empty">${selDay?'이 날은 내역이 없어요':'이 달은 내역이 없어요'}</div>`;
+  const dayMode=!!selDay&&txView==='list';
+  $('cal-clear').style.display=dayMode?'inline':'none';
+  let list = dayMode?dayTx(selDay):monthTx(calYM);
+  if(lstFilter)list=list.filter(x=>x.type===lstFilter);
+  listT.textContent = dayMode
+    ? `${+selDay.slice(5,7)}월 ${+selDay.slice(8)}일 내역 `
+    : `${ymLabel(calYM)} ${txView==='cat'?'카테고리별':'내역'} `;
+  const body=$('lst-body');
+  if(!list.length){
+    body.innerHTML=`<div class="card tight"><div class="empty">${
+      dayMode?'이 날은 내역이 없어요'
+      :`이 달에는 ${lstFilter==='income'?'수입':lstFilter==='expense'?'지출':'내역'}이 없어요`}</div></div>`;
+    return;
+  }
+  body.innerHTML = txView==='cat' ? renderByCat(list,calYM) : renderByDate(list);
 }
-function tapDay(ds){selDay=(selDay===ds?null:ds);renderCal();}
+function tapDay(ds){selDay=(selDay===ds?null:ds);lstAll=false;renderCal();}
 
 /* ═════════ 모달 공통 ═════════ */
 function openModal(html){$('sheet').innerHTML=html;$('modal').classList.add('open');document.body.style.overflow='hidden'}
@@ -2090,14 +2054,91 @@ function moveAcc(id,dir){
   S.accounts[i1]=tgt; S.accounts[i2]=a;
   save(); renderAssets();
 }
+/* ── 자산 탭 구성 ──
+ * 예전엔 11개 섹션이 전부 펼쳐져 있어서, 계좌 하나만 쓰는 사람도 "○○ 자산을 추가해보세요"
+ * 빈 상자 8개를 지나야 했다(화면의 43%). 이제 안 쓰는 분류는 제목째로 감추고 그룹 아래
+ * '추가' 줄에만 남긴다 — 하나라도 만들면 그때 자기 자리가 생긴다.
+ * 남은 섹션도 세 묶음으로 접어 한 화면에 들어오게 했다.
+ *
+ * has()   : 내용이 있는가. 없으면 숨긴다
+ * always  : 비어 있어도 보여준다 (입출금은 '쓸 수 있는 돈'의 근거라 길잡이가 필요하다)
+ * slots   : 이 섹션이 채울 빈 상자들의 id — 만들어만 두면 각 render 함수가 알아서 채운다 */
+const accsOf=t=>S.accounts.filter(a=>a.type===t);
+const ASSET_GROUPS=[
+  {k:'cash', name:'현금 · 저축',
+   sum:()=>['checking','deposit','saving','housing'].reduce((s,t)=>s+accsOf(t).reduce((x,a)=>x+accKRW(a),0),0),
+   secs:[
+    {label:'입출금 · 현금성', add:"openAccModal(null,'checking')", chip:'입출금', always:true,
+     has:()=>accsOf('checking').length, slots:['list-checking']},
+    {label:'예금', add:"openAccModal(null,'deposit')", chip:'예금',
+     has:()=>accsOf('deposit').length, slots:['list-deposit']},
+    {label:'적금 · 묶인 돈', add:"openAccModal(null,'saving')", chip:'적금',
+     has:()=>accsOf('saving').length, slots:['list-saving']},
+    {label:'주택청약', add:"openAccModal(null,'housing')", chip:'청약',
+     has:()=>accsOf('housing').length, slots:['list-housing','housing-card']},
+   ]},
+  {k:'inv', name:'투자',
+   sum:()=>accsOf('invest').reduce((s,a)=>s+accKRW(a),0),
+   secs:[
+    {label:'투자', add:"openAccModal(null,'invest')", chip:'투자 계좌',
+     has:()=>accsOf('invest').length, slots:['inv-alert','list-invest','invperf-card','dca-card']},
+   ]},
+  {k:'plan', name:'계획 · 관리', sum:null,
+   secs:[
+    {label:'저축 목표', add:'openGoalModal()', chip:'저축 목표',
+     has:()=>S.goals.length, slots:['list-goals']},
+    {label:'고정 수입', add:"openFixedModal(null,'income')", chip:'고정 수입',
+     has:()=>fixedOf('income').length, slots:['list-fixed-in']},
+    {label:'고정비', add:"openFixedModal(null,'expense')", chip:'고정비',
+     has:()=>fixedOf('expense').length, slots:['list-fixed']},
+    {label:'받을 돈 · 빌린 돈', add:'openDebtModal()', chip:'받을 돈',
+     has:()=>S.debts.length, slots:['list-debts']},
+    // 대조는 '만드는' 게 아니라 '점검하는' 항목이라, 맞춰볼 계좌가 있을 때만 띄운다
+    {label:'잔액 대조', add:'openReconModal()', addLabel:'점검하기', chip:'잔액 대조',
+     has:()=>S.accounts.some(a=>a.type==='checking'||a.type==='deposit'), slots:['recon-card']},
+   ]},
+];
+const assetGroupOpen=g=>{
+  const st=(S.settings&&S.settings.assetOpen)||{};
+  if(st[g.k]!=null)return !!st[g.k];
+  return g.secs.some(s=>s.always||s.has());     // 내용이 있으면 처음부터 펼쳐 둔다
+};
+function toggleAssetGroup(k){
+  const g=ASSET_GROUPS.find(x=>x.k===k); if(!g)return;
+  S.settings.assetOpen=Object.assign({},S.settings.assetOpen,{[k]:!assetGroupOpen(g)});
+  save(); renderAssets();
+}
+function assetGroupsHTML(){
+  return ASSET_GROUPS.map(g=>{
+    const open=assetGroupOpen(g);
+    const shown=g.secs.filter(s=>s.always||s.has());
+    const missing=g.secs.filter(s=>!s.always&&!s.has());
+    // 합계와 화살표는 이름 바로 옆에 둔다 — 넓은 화면에서 제목이 단 전체를 가로지르면
+    // 오른쪽 끝으로 밀린 숫자가 어느 묶음 것인지 알아보기 어렵다
+    const sum=g.sum?`<span class="num">${fmtK(g.sum())}원</span>`:'';
+    const head=`<div class="sec-title ag-head" onclick="toggleAssetGroup('${g.k}')">
+      <span class="ag-name">${g.name}</span><span class="link">${sum}<span class="ag-caret">${open?'▴':'▾'}</span></span></div>`;
+    if(!open)return head;
+    const body=shown.map(s=>
+      `<div class="sec-title">${s.label} <span class="link" onclick="event.stopPropagation();${s.add}">${s.addLabel||'+ 추가'}</span></div>`
+      +s.slots.map(id=>`<div class="card tight" id="${id}"></div>`).join('')
+    ).join('');
+    const addRow=missing.length?`<div class="add-row">${missing.map(s=>
+      `<button class="add-chip" onclick="${s.add}">＋ ${s.chip}</button>`).join('')}</div>`:'';
+    return head+body+addRow;
+  }).join('');
+}
 function renderAssets(){
   $('a-total').textContent=fmt(totalAssets());
-  const inv=S.accounts.filter(a=>a.type==='invest').reduce((s,a)=>s+accKRW(a),0);
+  const inv=accsOf('invest').reduce((s,a)=>s+accKRW(a),0);
   const locked=S.accounts.filter(a=>a.type==='saving'||a.type==='deposit'||a.type==='housing').reduce((s,a)=>s+accKRW(a),0);
   $('a-total-sub').textContent=`유동 ${fmtK(totalAssets()-inv-locked)}원 · 예적금 ${fmtK(locked)}원 · 투자 ${fmtK(inv)}원`;
+  // 빈 상자를 먼저 깔아두면 아래 render 함수들이 자기 자리를 찾아 채운다
+  $('asset-groups').innerHTML=assetGroupsHTML();
   for(const type of['checking','deposit','saving','housing','invest']){
-    const list=S.accounts.filter(a=>a.type===type);
-    $('list-'+type).innerHTML=list.length?list.map(a=>assetRow(a)).join(''):
+    const el=$('list-'+type); if(!el)continue;
+    const list=accsOf(type);
+    el.innerHTML=list.length?list.map(a=>assetRow(a)).join(''):
       `<div class="empty">${ACC_META[type].label} 자산을 추가해보세요</div>`;
   }
   const ob=$('ord-btn');
@@ -2857,7 +2898,7 @@ function fxBreak(){
   </div>`;
 }
 function renderDCA(){
-  const el=$('dca-card');
+  const el=$('dca-card'); if(!el)return;
   const logs=[...S.invLogs].sort((a,b)=>a.date.localeCompare(b.date));
   if(!logs.length){el.innerHTML=`<div class="row"><div style="font-weight:800;font-size:.92rem;margin-bottom:6px">DCA 적립 차트</div><span style="font-size:.78rem;cursor:pointer;color:var(--terra);font-weight:600" onclick="openDcaTargetModal()">목표 설정</span></div><div class="empty">투자 자산에서 납입을 기록하면<br>적립 곡선이 그려져요 📈</div>`;return}
   // 월별 누적 납입
@@ -2907,7 +2948,7 @@ function fixedRow(f){
       ${inactive?'<span class="badge gray">중지</span>':''}
       ${expired?'<span class="badge gray">종료됨</span>':''}
       ${ends?`<span class="badge terra">D-${ends} 종료</span>`:''}</div>
-      <div class="a-sub">매월 ${f.day}일 · ${f.cat} · ${isInc?'입금':'출금'} ${esc(pay)}</div>
+      <div class="a-sub">매월 ${f.day}일${f.cat?` · ${esc(f.cat)}`:''} · ${isInc?'입금':'출금'} ${esc(pay)}</div>
       <div class="a-sub">📅 ${fixedPeriodLabel(f)}</div></div>
     <div class="a-amt num" style="color:${isInc?'var(--green)':'var(--ink)'}">${isInc?'+':'−'}${fmt(f.amount)}</div>
   </div>`;
@@ -2915,8 +2956,10 @@ function fixedRow(f){
 function renderFixed(){
   const ym=thisYM();
   // 고정 수입
+  // 고정 수입과 고정비는 각각 따로 숨을 수 있으므로 한쪽이 없어도 다른 쪽은 그린다
   const inEl=$('list-fixed-in'), ins=fixedOf('income');
-  if(!ins.length)inEl.innerHTML=`<div class="empty">월급, 정기 용돈, 고정 과외비처럼<br>매달 들어오는 돈을 등록해보세요</div>`;
+  if(!inEl){/* 이 섹션은 접혀 있음 */}
+  else if(!ins.length)inEl.innerHTML=`<div class="empty">월급, 정기 용돈, 고정 과외비처럼<br>매달 들어오는 돈을 등록해보세요</div>`;
   else{
     const m=fixedMonthly('income',ym);
     inEl.innerHTML=`<div class="row" style="padding:4px 2px 10px"><span class="muted">월 고정수입 합계</span><b class="num pos">+${fmt(m)}</b></div>`
@@ -2924,6 +2967,7 @@ function renderFixed(){
   }
   // 고정 지출
   const el=$('list-fixed'), exs=fixedOf('expense');
+  if(!el)return;
   if(!exs.length)el.innerHTML=`<div class="empty">구독, 통신비 같은 매달 나가는 돈을 등록하면<br>매달 자동으로 지출에 반영돼요</div>`;
   else{
     const m=fixedMonthly('expense',ym), mi=fixedMonthly('income',ym);
@@ -3888,13 +3932,24 @@ function monthsWithData(){
   set.add(thisYM());set.add(prevYM(thisYM()));
   return[...set].sort().reverse().slice(0,18);
 }
+/* 리포트는 성격이 다른 화면 8개가 한 줄로 쌓여 3화면을 넘겼다.
+   요약(이번 달)·예측(앞날)·성향(나는 어떤 사람인가)으로 나누고, 보고 있는 것만 그린다. */
+let repView='sum';
+function setRepView(m){
+  repView=m; S.settings.repView=m; save();
+  applyRepView(); renderReport();
+}
+function applyRepView(){
+  document.querySelectorAll('#rep-viewseg button').forEach(b=>b.classList.toggle('on',b.dataset.m===repView));
+  ['sum','fore','style'].forEach(k=>{
+    const el=$('repview-'+k); if(el)el.style.display=(k===repView)?'':'none';
+  });
+}
 function renderReport(){
+  applyRepView();
+  if(repView==='fore'){ renderNetHist(); renderSim(); return; }
+  if(repView==='style'){ renderIncome(); renderProfile(); return; }
   renderFlowCard();
-  renderNetHist();
-  renderSim();
-  renderIncome();
-  renderProfile();
-  renderWhatIf();
   renderTrend();
   setTimeout(renderScoreHistory,0);
   const months=monthsWithData();
@@ -4784,7 +4839,7 @@ function monthsLater(n){
   return `${d.getFullYear()}년 ${d.getMonth()+1}월`;
 }
 function renderGoals(){
-  const el=$('list-goals');
+  const el=$('list-goals'); if(!el)return;
   if(!S.goals.length){el.innerHTML=`<div class="empty">'여행자금 200만원'처럼 목표를 만들면<br>진행률이 채워지는 걸 볼 수 있어요 🎯</div>`;return}
   el.innerHTML=S.goals.map((g,idx)=>{
     const cur=goalSaved(g),pct=Math.min(100,g.target>0?cur/g.target*100:0),done=pct>=100;
@@ -4992,58 +5047,11 @@ function drawSim(){
     <div class="cell"><div class="k">추가 절약 효과</div><div class="v num ${vsBase>=0?'pos':'neg'}">${vsBase>=0?'+':'−'}${fmtK(Math.abs(vsBase))}</div><div class="d">지금 페이스 대비</div></div>`;
 }
 
-/* ═════════ v3: 큰 지출 What-if ═════════ */
-let wiAmt=0, wiMonths=1;
-function renderWhatIf(){
-  const el=$('whatif-card');
-  el.innerHTML=`
-    <div style="font-weight:800;font-size:.95rem">🤔 큰 지출 What-if</div>
-    <div class="tiny" style="margin-top:4px">지를까 말까 고민되는 지출을 넣어보면 현금흐름 영향을 미리 계산해요</div>
-    <div class="wi-preset">
-      <button onclick="wiSet(1500000,1)">노트북 150만</button>
-      <button onclick="wiSet(500000,1)">여행 50만</button>
-      <button onclick="wiSet(1200000,3)">가전 120만·3개월</button>
-    </div>
-    <div class="grid2" style="margin-top:4px">
-      <div class="field" style="margin-bottom:8px"><label>지출 금액 (원)</label><input type="number" inputmode="numeric" id="wi-amt" value="${wiAmt||''}" placeholder="1500000" oninput="wiCalc()"></div>
-      <div class="field" style="margin-bottom:8px"><label>할부 개월</label><select id="wi-months" onchange="wiCalc()">${[1,2,3,6,12].map(n=>`<option value="${n}" ${wiMonths===n?'selected':''}>${n===1?'일시불':n+'개월'}</option>`).join('')}</select></div>
-    </div>
-    <div id="wi-result"></div>`;
-  wiCalc();
-}
-function wiSet(a,m){wiAmt=a;wiMonths=m;renderWhatIf()}
-function wiCalc(){
-  if($('wi-amt'))wiAmt=Math.round(numVal('wi-amt'));
-  if($('wi-months'))wiMonths=numVal('wi-months')||1;
-  const box=$('wi-result'); if(!box)return;
-  if(!wiAmt){box.innerHTML='';return}
-  const perMonth=Math.round(wiAmt/wiMonths);
-  const liquid=S.accounts.filter(a=>a.type==='checking'||a.type==='deposit').reduce((s,a)=>s+accKRW(a),0);
-  const baseSave=recentMonthlySaving();
-  const t=totals(thisYM());
-  const thisMonthBal=t.inc-t.exp-perMonth; // 이번 달 첫 회차 반영
-  const afterLiquid=liquid-perMonth;
-  const monthsToRecover=baseSave>0?Math.ceil(wiAmt/baseSave):null;
-  // 판정
-  let cls,verdict;
-  if(perMonth>liquid){cls='wi-bad';verdict=`⚠️ 첫 회차 ${fmt(perMonth)}이 현재 유동자산(${fmtK(liquid)}원)을 넘어요. 지금은 무리예요.`;}
-  else if(baseSave>0 && perMonth>baseSave*1.5){cls='wi-warn';verdict=`🟡 첫 회차가 월 저축액(${fmtK(baseSave)}원)의 ${(perMonth/baseSave).toFixed(1)}배예요. ${wiMonths>1?'할부 개월을 늘리거나 ':''}한 달 미루는 걸 고려해보세요.`;}
-  else if(baseSave<=0){cls='wi-warn';verdict=`🟡 최근 저축 페이스가 0 이하라 판단이 어려워요. 유동자산에서 ${fmtK(perMonth)}원이 빠진다는 점만 확인하세요.`;}
-  else{cls='wi-ok';verdict=`🟢 감당 가능해요. ${monthsToRecover?`이 지출은 약 ${monthsToRecover}개월치 저축에 해당해요.`:''} ${wiMonths>1?`${wiMonths}개월 할부면 월 ${fmtK(perMonth)}원씩이에요.`:''}`;}
-  box.innerHTML=`
-    <div class="sim-out">
-      <div class="cell"><div class="k">${wiMonths>1?'첫 달 부담':'즉시 부담'}</div><div class="v num">${fmtK(perMonth)}원</div></div>
-      <div class="cell"><div class="k">이번 달 수지</div><div class="v num ${thisMonthBal>=0?'pos':'neg'}">${thisMonthBal>=0?'+':'−'}${fmtK(Math.abs(thisMonthBal))}</div></div>
-      <div class="cell"><div class="k">지출 후 유동자산</div><div class="v num ${afterLiquid>=0?'':'neg'}">${fmtK(afterLiquid)}원</div></div>
-    </div>
-    <div class="wi-verdict ${cls}">${verdict}</div>`;
-}
-
 /* ═════════ v4-1: 받을 돈 · 빌린 돈 장부 ═════════ */
 const debtOpen=dir=>S.debts.filter(d=>d.dir===dir&&!d.settled);
 const debtSum=dir=>debtOpen(dir).reduce((s,d)=>s+d.amount,0);
 function renderDebts(){
-  const el=$('list-debts');
+  const el=$('list-debts'); if(!el)return;
   const recv=debtSum('receivable'), pay=debtSum('payable');
   const head=`<div class="debt-sum">
     <div class="cell" style="background:var(--green-soft)"><div class="k" style="color:var(--green)">받을 돈</div><div class="v num" style="color:var(--green)">${fmtK(recv)}원</div></div>
@@ -5413,7 +5421,7 @@ function delWish(id){S.wish=S.wish.filter(x=>x.id!==id);save();renderAll()}
 /* ═════════ v5-2: 잔액 대조 ═════════ */
 function lastRecon(){return S.recon.length?S.recon[S.recon.length-1]:null}
 function renderRecon(){
-  const el=$('recon-card');
+  const el=$('recon-card'); if(!el)return;
   const last=lastRecon();
   const accs=S.accounts.filter(a=>a.type==='checking'||a.type==='deposit');
   if(!accs.length){el.innerHTML=`<div class="empty">계좌를 등록하면 실제 잔액과<br>앱 기록을 맞춰볼 수 있어요</div>`;return}
@@ -5912,43 +5920,30 @@ function benchBar(rate){
   </div>`;
 }
 
-/* ═════════ v9: 내역 탭 (달력 / 날짜별 / 카테고리별) ═════════ */
-let txView='cal', lstYM=null, lstFilter='';
+/* ═════════ 내역 탭 보기 모드 (날짜별 / 카테고리별) ═════════ */
+let txView='list', lstFilter='', lstAll=false;
 function setTxView(m){
-  txView=m; S.settings.txView=m; save();
-  document.querySelectorAll('#tx-viewseg button').forEach(b=>b.classList.toggle('on',b.dataset.m===m));
-  $('cal-wrap').style.display=(m==='cal')?'':'none';
-  $('list-wrap').style.display=(m==='cal')?'none':'';
-  if(m==='cal')renderCal(); else renderList();
+  txView=m; S.settings.txView=m;
+  if(m!=='list')selDay=null;        // 카테고리별에서는 날짜 선택이 의미가 없다
+  lstAll=false; save(); renderCal();
 }
-function lstMove(d){
-  const[y,m]=(lstYM||thisYM()).split('-').map(Number);
-  const nd=new Date(y,m-1+d,1);
-  lstYM=`${nd.getFullYear()}-${pad(nd.getMonth()+1)}`;renderList();
+/* 달력은 '날짜별'에서만 의미가 있다 — 카테고리별에서는 접어둔다 */
+function applyTxView(){
+  document.querySelectorAll('#tx-viewseg button').forEach(b=>b.classList.toggle('on',b.dataset.m===txView));
+  const box=$('cal-box'); if(box)box.style.display=(txView==='list')?'':'none';
 }
-function setLstFilter(f){lstFilter=f;renderList()}
-function renderList(){
-  const ym=lstYM||thisYM();
-  $('lst-label').textContent=ymLabel(ym);
-  ['','expense','income'].forEach(f=>{
-    const el=$('lf-'+(f||'all')); if(el)el.classList.toggle('on',lstFilter===f);
-  });
-  const t=totals(ym);
-  $('lst-summary').innerHTML=`<span class="tiny">수입 <b class="pos num">+${fmtK(t.inc)}원</b></span>
-    <span class="tiny">지출 <b class="neg num">−${fmtK(t.exp)}원</b></span>
-    <span class="tiny">수지 <b class="num ${t.bal>=0?'pos':'neg'}">${t.bal>=0?'+':'−'}${fmtK(Math.abs(t.bal))}원</b></span>`;
-  let list=monthTx(ym);
-  if(lstFilter)list=list.filter(x=>x.type===lstFilter);
-  else list=list.filter(x=>x.type!=='transfer'||true);
-  const body=$('lst-body');
-  if(!list.length){body.innerHTML=`<div class="card tight"><div class="empty">이 달에는 ${lstFilter==='income'?'수입':lstFilter==='expense'?'지출':'내역'}이 없어요</div></div>`;return}
-  body.innerHTML = txView==='list' ? renderByDate(list) : renderByCat(list,ym);
-}
+function setLstFilter(f){lstFilter=f;lstAll=false;renderCal()}
+/* 날짜별 목록. 한 달치를 통째로 펼치면 4화면을 넘기고, 달력이 바로 위에 있어
+   먼 날짜는 어차피 달력으로 짚는다 — 최근 며칠만 펼치고 나머지는 눌러서 연다. */
+const DAY_CAP=7;
 function renderByDate(list){
   const byDay={};
   list.forEach(t=>(byDay[t.date]=byDay[t.date]||[]).push(t));
-  const days=Object.keys(byDay).sort((a,b)=>b.localeCompare(a));
+  const all=Object.keys(byDay).sort((a,b)=>b.localeCompare(a));
+  const days=lstAll?all:all.slice(0,DAY_CAP);
+  const rest=all.length-days.length;
   const DOW=['일','월','화','수','목','금','토'];
+  const more=rest>0?`<button class="btn ghost block" style="margin-top:12px" onclick="lstAll=true;renderCal()">이전 ${rest}일 더 보기</button>`:'';
   return days.map(d=>{
     const items=byDay[d];
     const exp=items.filter(x=>x.type==='expense').reduce((s,x)=>s+x.amount,0);
@@ -5961,10 +5956,10 @@ function renderByDate(list){
       </div>
       <div class="card tight">${items.sort((a,b)=>b.id.localeCompare(a.id)).slice(0,60).map(txRow).join('')}${items.length>60?`<div class="tiny" style="text-align:center;padding:6px">외 ${items.length-60}건</div>`:''}</div>
     </div>`;
-  }).join('');
+  }).join('')+more;
 }
 let openCats={};
-function toggleCat(c){openCats[c]=!openCats[c];renderList()}
+function toggleCat(c){openCats[c]=!openCats[c];renderCal()}
 function renderByCat(list,ym){
   const type=lstFilter||'expense';
   const items=list.filter(t=>t.type===(lstFilter||'expense'));
@@ -6052,11 +6047,18 @@ function renderBills(){
       </div>
     <div class="card tight"><div class="tiny">💡 신용카드는 <b>이번 달 쓴 돈이 다음 달 결제일</b>에 빠져나가요. 위 금액은 아직 결제 처리하지 않은 내역만 집계합니다.</div></div>`;
 }
+/* 카드별 내역은 자기 달을 따로 본다 (내역 탭의 달과 섞이면 혼란스럽다) */
+let ctYM=null;
+function ctMove(d){
+  const[y,m]=(ctYM||thisYM()).split('-').map(Number);
+  const nd=new Date(y,m-1+d,1);
+  ctYM=`${nd.getFullYear()}-${pad(nd.getMonth()+1)}`; renderCardDetail();
+}
 function renderCardDetail(){
   const el=$('cardview-detail');
   if(!S.cards.length){el.innerHTML=`<div class="card"><div class="empty">카드를 등록하면 카드별 사용 내역을<br>모아서 볼 수 있어요</div></div>`;return}
   if(!ctSel||!cardById(ctSel))ctSel=S.cards[0].id;
-  const c=cardById(ctSel), ym=lstYM||thisYM();
+  const c=cardById(ctSel), ym=ctYM||thisYM();
   const txs=monthTx(ym).filter(t=>t.payKind==='card'&&t.payId===c.id);
   const spend=txs.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
   const byCat={};
@@ -6067,9 +6069,9 @@ function renderCardDetail(){
     <div class="cardtab-head">${S.cards.map(x=>
       `<div class="ct-chip ${x.id===ctSel?'on':''}" onclick="ctSel='${x.id}';renderCardDetail()">${esc(x.name)}</div>`).join('')}</div>
     <div class="card tight" style="margin-bottom:12px">
-      <div class="row"><button class="btn ghost sm" onclick="lstMove(-1);renderCardDetail()">‹</button>
+      <div class="row"><button class="btn ghost sm" onclick="ctMove(-1)">‹</button>
         <b style="flex:1;text-align:center;font-size:.95rem">${ymLabel(ym)}</b>
-        <button class="btn ghost sm" onclick="lstMove(1);renderCardDetail()">›</button></div>
+        <button class="btn ghost sm" onclick="ctMove(1)">›</button></div>
       <div class="stat3" style="margin-top:10px">
         <div class="cell"><div class="k">사용액</div><div class="v num">${fmtK(spend)}원</div></div>
         <div class="cell"><div class="k">${c.type==='credit'?'청구액':'출금액'}</div><div class="v num">${fmtK(b.net)}원</div>${b.disc>0?`<div class="d pos">할인 −${fmtK(b.disc)}</div>`:''}</div>
@@ -6750,12 +6752,13 @@ recordScore();
 touchNetHist();
 fxRecord(fxRate());                 // 자동 갱신이 막혀도 하루 한 점은 남긴다
 store.save(S);                      // 앱을 열기만 해도 그날의 순자산·환율은 남는다
-txView=S.settings.txView||'cal'; cardView=S.settings.cardView||'manage';
+// 예전 '달력' 모드는 '날짜별'로 합쳐졌다 — 그 설정으로 저장돼 있으면 옮겨준다
+txView=(S.settings.txView==='cat')?'cat':'list';
+cardView=S.settings.cardView||'manage';
+repView=S.settings.repView||'sum';
 setTimeout(()=>{
-  document.querySelectorAll('#tx-viewseg button').forEach(b=>b.classList.toggle('on',b.dataset.m===txView));
+  applyTxView(); applyRepView();
   document.querySelectorAll('#card-viewseg button').forEach(b=>b.classList.toggle('on',b.dataset.m===cardView));
-  $('cal-wrap').style.display=(txView==='cal')?'':'none';
-  $('list-wrap').style.display=(txView==='cal')?'none':'';
   $('cardview-manage').style.display=(cardView==='manage')?'':'none';
   $('cardview-bill').style.display=(cardView==='bill')?'':'none';
   $('cardview-detail').style.display=(cardView==='detail')?'':'none';
