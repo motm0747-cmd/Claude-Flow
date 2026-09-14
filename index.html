@@ -601,15 +601,23 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
   #app{max-width:1080px;padding-left:28px;padding-right:28px;padding-bottom:120px}
   header{padding:30px 2px 18px}
   .wordmark{font-size:1.5rem}
-  #view-home,#view-assets,#card-list{column-count:2;column-gap:20px}
-  #view-home>*,#view-assets>*,#card-list>*{break-inside:avoid;-webkit-column-break-inside:avoid}
-  /* 자산 섹션은 한 겹 더 안쪽에 있으므로 직접 단(column)에 흘려보낸다 */
+  /* ── 자산·카드: 카드 하나하나가 독립적이라 다단(column)에 흘려보내도 읽힌다 ── */
+  #view-assets,#card-list{column-count:2;column-gap:20px}
+  #view-assets>*,#card-list>*{break-inside:avoid;-webkit-column-break-inside:avoid}
+  /* 자산 섹션은 한 겹 더 안쪽에 있으므로 직접 단에 흘려보낸다 */
   #asset-groups{display:contents}
   #asset-groups>*{break-inside:avoid;-webkit-column-break-inside:avoid}
   .ag-head{column-span:all;-webkit-column-span:all;break-before:column}
+  .add-row{column-span:all;-webkit-column-span:all}   /* 묶음의 꼬리라 전체 폭으로 */
   .sec-title{break-after:avoid}
-  .hero,#storage-banner,#sync-banner,#digest-slot,#brief-slot,#report-banner,#dca-banner,
-  #perf-banner,#warn-slot{column-span:all;-webkit-column-span:all}
+  .hero{column-span:all;-webkit-column-span:all}
+  /* ── 홈: 다단 대신 그리드 ──
+     홈은 '제목 + 그 아래 카드'로 이루어진 화면이라 다단과 맞지 않는다. 내용이 단을
+     넘어가면서 제목만 딴 칸에 홀로 남고, 알림 배너는 전체 폭인데 바로 옆 배너는
+     한 칸 폭이 되는 식으로 줄이 어긋났다. 섹션을 통째로 격자에 올린다. */
+  .home-cols{display:grid;grid-template-columns:1fr 1fr;gap:0 20px;align-items:start}
+  .home-sec{min-width:0}
+  .home-sec>.sec-title:first-child{margin-top:14px}
   .hero{padding:28px 26px}
   .hero .amount{font-size:2.5rem}
   .hero-grid{max-width:640px}
@@ -629,7 +637,8 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 }
 @media (min-width:1500px){
   #app{max-width:1340px}
-  #view-home,#view-assets,#card-list{column-count:3}
+  #view-assets,#card-list{column-count:3}
+  /* 홈은 3단까지 벌리지 않는다 — 카드가 몇 개 없어 빈 칸만 늘어난다 */
   .fab{right:max(28px,calc(50% - 686px))}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -672,37 +681,48 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
       <button class="btn ghost sm block" style="margin-top:11px" id="h-lead-btn" onclick="openSafeModal()">계산 근거 보기</button>
     </div>
 
-    <!-- ② 지금 해야 할 일 -->
-    <div class="sec-title">지금 해야 할 일 <span id="todo-count"></span></div>
-    <div id="todo-zone">
-      <div id="storage-banner"></div>
-      <div id="sync-banner"></div>
-      <div id="digest-slot"></div>
-      <div id="flow-slot"></div>
-      <div id="warn-slot"></div>
-      <div class="card tight" id="anomaly-card"></div>
-      <div id="streak-slot"></div>
-      <div id="dca-banner"></div>
-      <div id="perf-banner"></div>
-      <div id="report-banner"></div>
-      <div id="brief-slot"></div>
+    <!-- ② 지금 해야 할 일 — 급한 알림이라 넓은 화면에서도 늘 전체 폭 -->
+    <div class="home-full">
+      <div class="sec-title">지금 해야 할 일 <span id="todo-count"></span></div>
+      <div id="todo-zone">
+        <div id="storage-banner"></div>
+        <div id="sync-banner"></div>
+        <div id="digest-slot"></div>
+        <div id="flow-slot"></div>
+        <div id="warn-slot"></div>
+        <div class="card tight" id="anomaly-card"></div>
+        <div id="streak-slot"></div>
+        <div id="dca-banner"></div>
+        <div id="perf-banner"></div>
+        <div id="report-banner"></div>
+        <div id="brief-slot"></div>
+      </div>
+      <div id="todo-empty"></div>
     </div>
-    <div id="todo-empty"></div>
 
-    <!-- ③ 이번 달 흐름 -->
-    <div class="sec-title">이번 달 흐름</div>
-    <div class="card tight" id="budget-card"></div>
+    <!-- ③ 흐름과 기록 — 넓은 화면에서 2단. 제목과 그 카드는 한 덩어리로 묶어
+         단이 갈리면서 제목만 딴 칸으로 떨어지는 일이 없게 한다 -->
+    <div class="home-cols">
+      <section class="home-sec">
+        <div class="sec-title">이번 달 흐름</div>
+        <div class="card tight" id="budget-card"></div>
+      </section>
+      <section class="home-sec">
+        <div class="sec-title">기록 <span class="link" onclick="switchView('cal')">전체 보기</span></div>
+        <div class="card tight" id="quick-card"></div>
+        <div class="card tight" id="recent-tx"></div>
+      </section>
+    </div>
 
-    <div class="sec-title">기록 <span class="link" onclick="switchView('cal')">전체 보기</span></div>
-    <div class="card tight" id="quick-card"></div>
-    <div class="card tight" id="recent-tx"></div>
-
-    <div class="sec-title" style="cursor:pointer" onclick="toggleHomeMore()">
-      <span id="more-label">더 보기</span><span class="link" id="more-caret">▾</span></div>
-    <div id="home-more" style="display:none">
-      <div class="card tight" id="weekly-card"></div>
-      <div class="sec-title">위시리스트 <span class="link" onclick="openWishModal()">+ 담기</span></div>
-      <div class="card tight" id="wish-card"></div>
+    <!-- ④ 덜 급한 것 — 페이지 전체를 여닫는 스위치라 단을 나누지 않는다 -->
+    <div class="home-full">
+      <div class="sec-title" style="cursor:pointer" onclick="toggleHomeMore()">
+        <span id="more-label">더 보기</span><span class="link" id="more-caret">▾</span></div>
+      <div id="home-more" style="display:none">
+        <div class="card tight" id="weekly-card"></div>
+        <div class="sec-title">위시리스트 <span class="link" onclick="openWishModal()">+ 담기</span></div>
+        <div class="card tight" id="wish-card"></div>
+      </div>
     </div>
   </div>
 
@@ -839,7 +859,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20260914-tidy';
+const APP_BUILD='20260914-pc';
 const KEY='claudeflow_v1';
 const store={
   ok:(()=>{try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true}catch(e){return false}})(),
