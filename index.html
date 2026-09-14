@@ -152,6 +152,13 @@ header{display:flex;align-items:center;justify-content:space-between;padding:20p
 .ag-head+.sec-title{margin-top:12px}
 /* 아직 안 쓰는 분류는 목록 대신 이 줄에만 남는다 */
 .add-row{display:flex;flex-wrap:wrap;gap:7px;margin:10px 2px 4px}
+/* 시작 마법사 단계 표시 */
+.wz-dots{display:flex;gap:6px;margin:-2px 0 14px}
+.wz-dots .wz-dot{flex:1;text-align:center;font-size:var(--t-xs);font-weight:700;color:var(--faint);
+  padding:7px 2px;border-radius:9px;background:var(--fill-2);cursor:pointer;
+  transition:background .16s,color .16s}
+.wz-dots .wz-dot.done{color:var(--green);background:var(--green-soft)}
+.wz-dots .wz-dot.on{color:var(--bg);background:var(--ink)}
 .add-chip{border:1px dashed var(--line2);background:transparent;border-radius:var(--r-full);
   padding:7px 13px;font-family:inherit;font-size:var(--t-sm);font-weight:600;color:var(--sub);
   cursor:pointer;transition:background .16s,color .16s,border-color .16s}
@@ -685,6 +692,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
     <div class="home-full">
       <div class="sec-title">지금 해야 할 일 <span id="todo-count"></span></div>
       <div id="todo-zone">
+        <div id="setup-banner"></div>
         <div id="storage-banner"></div>
         <div id="sync-banner"></div>
         <div id="digest-slot"></div>
@@ -859,7 +867,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20260914-pc';
+const APP_BUILD='20260914-start';
 const KEY='claudeflow_v1';
 const store={
   ok:(()=>{try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true}catch(e){return false}})(),
@@ -913,8 +921,12 @@ function migrate(){
     if(!c.prepays)c.prepays=[];                    // 선결제 이력
     if(c.issued===undefined)c.issued='';           // 발급일 (넣으면 첫 달 실적 면제)
     if(c.exemptM===undefined)c.exemptM=1;          // 전월실적 면제 개월 수
+    if(c.noInstPerk===undefined)c.noInstPerk=true; // 할부는 혜택 제외 (카드사 기본값)
     if(c.type==='credit'&&!c.autoPre)              // 매주 자동 선결제 설정 (기본 꺼짐)
       c.autoPre={on:false,weekday:5,min:300000,lastRun:''};
+    /* 개시 스냅샷 — 앱을 쓰기 전부터 있던 카드값·실적.
+       거래로 만들면 '이번 달 지출'에 과거 소비가 섞이므로 별도 숫자로 들고 있는다. */
+    if(!c.open)c.open={ym:'',pending:0,perf:0};
   });
   // 제거된 기능(문자 자동 기록·토스증권 연동)이 남긴 데이터 청소 — 동기화 용량만 차지한다
   if(S.sms)delete S.sms;
@@ -932,6 +944,8 @@ function migrate(){
   if(S.settings.txView!=='cat')S.settings.txView='list';
   if(!S.settings.cardView)S.settings.cardView='manage';
   if(!S.settings.repView)S.settings.repView='sum';
+  // 이미 쓰던 사람에게 시작 마법사를 띄우지 않는다 (내역이 있으면 이미 시작한 것)
+  if(S.settings.setupAt===undefined)S.settings.setupAt=(S.tx.length>20)?'migrated':'';
   S.accounts.forEach(a=>{
     if(!a.cur)a.cur='KRW';
     if(a.type==='invest'){
@@ -1166,7 +1180,8 @@ function billedDiscount(card){
 }
 let _discCache={},_discVer='';
 function _discInvalidate(){_discCache={};_discVer='';_mcCache={};_mcVer='';_mtCache={};_mtVer=''}
-function _discStamp(){return S.tx.length+'|'+S.cards.length+'|'+JSON.stringify(S.tx.map(t=>t.paidPortions||0)).length}
+function _discStamp(){return S.tx.length+'|'+S.cards.length+'|'+JSON.stringify(S.tx.map(t=>t.paidPortions||0)).length
+  +'|'+S.cards.reduce((s,c)=>s+openPending(c),0)}
 function accruedDiscount(ym){
   const M=ym||thisYM(), v=_discStamp();
   if(_discVer!==v){_discCache={};_discVer=v}
@@ -1177,8 +1192,24 @@ function accruedDiscount(ym){
 }
 const creditPendingNet=c=>Math.max(0,creditPending(c)-billedDiscount(c));
 function totalCreditPendingNet(){return S.cards.filter(c=>c.type==='credit').reduce((s,c)=>s+creditPendingNet(c),0)}
+/* ── 개시 스냅샷 ──────────────────────────────────────────────────────
+ * 가계부는 0원에서 시작하지 않는다. 앱을 켠 날에도 이미 지난달 카드값이 남아 있고,
+ * 전월 실적도 쌓여 있다. 과거 내역을 전부 입력하게 하면 아무도 끝까지 못 하므로
+ * '그때의 상태' 숫자만 받아 둔다.
+ *   open.pending — 시작 시점의 미결제(결제 예정) 금액
+ *   open.perf    — 시작 직전 달의 실적 인정액
+ *   open.ym      — 시작한 달 (실적을 어느 달에 얹을지 판단용)
+ * 거래로 만들지 않는 이유: 과거 소비가 '이번 달 지출' 통계에 섞이면 안 되기 때문이다.
+ * 자산(갚을 돈)·결제 예정·실적 판정에만 들어간다. */
+const openPending=c=>Math.max(0,Math.round((c&&c.open&&c.open.pending)||0));
+const openPerfOf=(c,ym)=>{
+  const o=c&&c.open;
+  if(!o||!o.ym||!(o.perf>0))return 0;
+  return (ym===prevYM(o.ym))?Math.round(o.perf):0;   // 시작 직전 달에만 얹는다
+};
 function creditPending(card){ // 미결제 잔액: 청구됐지만 아직 결제 처리 안 된 회차 합
-  return S.tx.filter(t=>t.type==='expense'&&t.payKind==='card'&&t.payId===card.id).reduce((s,t)=>s+pendingOfTx(t),0);
+  return S.tx.filter(t=>t.type==='expense'&&t.payKind==='card'&&t.payId===card.id).reduce((s,t)=>s+pendingOfTx(t),0)
+    + openPending(card);
 }
 function installRemain(card){ // 아직 청구되지 않은 미래 할부 잔여
   return S.tx.filter(t=>t.type==='expense'&&t.payKind==='card'&&t.payId===card.id&&(t.months||1)>1)
@@ -1186,7 +1217,9 @@ function installRemain(card){ // 아직 청구되지 않은 미래 할부 잔여
 }
 /* 전월 실적 엔진 */
 function perfSpend(card,ym){ // 실적 인정액: 제외 카테고리·실적제외 표시 건 제외
-  return monthTx(ym).filter(t=>t.type==='expense'&&t.payKind==='card'&&t.payId===card.id&&!t.noPerf&&!(card.exclCats||[]).includes(t.cat)).reduce((s,t)=>s+t.amount,0);
+  // 할부도 실적에는 대개 포함되므로 여기서는 거르지 않는다 (혜택만 제외 — instExcluded)
+  return monthTx(ym).filter(t=>t.type==='expense'&&t.payKind==='card'&&t.payId===card.id&&!t.noPerf&&!(card.exclCats||[]).includes(t.cat)).reduce((s,t)=>s+t.amount,0)
+    + openPerfOf(card,ym);
 }
 const achievedTierBy=(amt,tiers)=>tiers.filter(t=>amt>=t).length;
 /* ── 발급 첫 달 전월실적 면제 ──────────────────────────────────────────
@@ -1216,8 +1249,12 @@ const _pnorm=x=>String(x||'').replace(/\s+/g,'').toLowerCase();
 function perkMerchants(p){
   return String(p.merchants||'').split(/[,·|]/).map(_pnorm).filter(Boolean);
 }
-function perkMatch(p,t){
+/* 대부분의 카드사는 할부 결제에 적립·할인을 주지 않는다(실적에는 대개 포함).
+   카드마다 다를 수 있어 카드 단위 설정으로 두고, 기본값은 '제외'다. */
+const instExcluded=(card,t)=>!!(card&&card.noInstPerk!==false&&(t.months||1)>1);
+function perkMatch(p,t,card){
   if((t.amount||0)<(p.minAmt||0))return false;
+  if(instExcluded(card,t))return false;                       // 할부는 혜택 대상 아님
   if(p.via==='simple'&&(t.via||'')!=='simple')return false;   // 간편결제 전용 혜택
   if(p.via==='normal'&&(t.via||'')==='simple')return false;   // 간편결제는 다른 혜택이 가져간다
   const ms=perkMerchants(p);
@@ -1255,12 +1292,12 @@ function perkEstimates(card,ym,extra){ // 혜택별 이번 달 예상 적립액 
     const need=(p.tier===undefined?1:p.tier);
     // tier 0 = 이 혜택만 실적 조건이 없는 경우 (한 카드에 조건이 섞여 있을 수 있다)
     const active=need===0?true:(tiers.length?activeTier>=need:true);
-    const txs=pool.filter(t=>t.type==='expense'&&t.payKind==='card'&&t.payId===card.id&&perkMatch(p,t))
+    const txs=pool.filter(t=>t.type==='expense'&&t.payKind==='card'&&t.payId===card.id&&perkMatch(p,t,card))
       .sort((a,b)=>a.date.localeCompare(b.date));
     const use=(p.maxCnt||0)>0?txs.slice(0,p.maxCnt):txs;
     // 연속일은 달 경계에서 끊기면 안 되므로 전체 내역으로 판정한다
     const boosted=(p.boost||0)>0?streakQualified(
-      all.filter(t=>t.type==='expense'&&t.payKind==='card'&&t.payId===card.id&&perkMatch(p,t)).map(t=>t.date),
+      all.filter(t=>t.type==='expense'&&t.payKind==='card'&&t.payId===card.id&&perkMatch(p,t,card)).map(t=>t.date),
       Math.max(1,p.streakDays||1)):null;
     let est=0, boostN=0;
     use.forEach(t=>{
@@ -1559,6 +1596,7 @@ function renderHome(){
   // 저장소 경고
   $('storage-banner').innerHTML = store.ok?'':
     `<div class="banner" style="background:var(--terra-soft);border-color:var(--terra-line);border-left-color:var(--terra)"><div class="b-main">⚠️ 미리보기 환경이라 데이터가 저장되지 않아요. 파일을 저장해 Safari에서 열면 자동 저장됩니다.</div></div>`;
+  renderSetupBanner();
   renderStreakBanner();
   renderFlowBanner();
   // 지난달 리포트 배너
@@ -1873,9 +1911,26 @@ function instFields(){ // 할부(신용) + 실적 제외 토글(카드)
   const d=txDraft, c=d.payKind==='card'?cardById(d.payId||''):null;
   let h='';
   if(c&&c.type==='credit'){
-    h+=`<div class="field"><label>할부</label><select id="tx-months" onchange="syncTxDraft()">
-      ${[1,2,3,4,5,6,10,12].map(n=>`<option value="${n}" ${(d.months||1)===n?'selected':''}>${n===1?'일시불':n+'개월'}</option>`).join('')}</select>
-      ${(d.months||1)>1?`<div class="tiny" style="margin-top:4px">매달 약 ${fmt(Math.floor(Math.round(+d.amount||0)/(d.months||1)))}씩 ${d.months}회 청구돼요.</div>`:''}</div>`;
+    const M=d.months||1, done=Math.min(M-1,Math.max(0,+d.paidPortions||0));
+    h+=`<div class="field"><label>할부</label><select id="tx-months" onchange="syncTxDraft();renderTxModal()">
+      ${[1,2,3,4,5,6,10,12].map(n=>`<option value="${n}" ${M===n?'selected':''}>${n===1?'일시불':n+'개월'}</option>`).join('')}</select>
+      ${M>1?`<div class="tiny" style="margin-top:4px">매달 약 ${fmt(Math.floor(Math.round(+d.amount||0)/M))}씩 ${M}회 청구돼요.</div>`:''}</div>`;
+    /* 앱을 쓰기 전부터 진행 중이던 할부를 그대로 옮겨올 수 있어야 한다.
+       이 칸이 없으면 5회차까지 낸 12개월 할부도 전액이 미결제로 잡힌다.
+       ⚠️ 청구 회차는 '구입일 기준'으로 세므로, 구입일이 오늘이면 아직 1회차도 청구되지
+          않은 상태다. 이미 낸 회차를 넣었는데 구입일이 그만큼 지나지 않았으면 조용히
+          금액이 사라지므로(회차가 통째로 건너뛰어짐) 그 사실을 그 자리에서 알린다. */
+    if(M>1){
+      const probe={amount:Math.round(+d.amount||0),months:M,date:d.date||todayStr(),paidPortions:done};
+      const due=duePortions(probe), pend=pendingOfTx(probe);
+      const left=M-done, leftAmt=probe.amount-settledAmt(probe);
+      h+=`<div class="field"><label>이미 낸 회차 <span class="tiny">(진행 중인 할부를 옮길 때)</span></label>
+        <select id="tx-paid" onchange="syncTxDraft();renderTxModal()">
+          ${Array.from({length:M},(_,i)=>`<option value="${i}" ${done===i?'selected':''}>${i===0?'없음 (이번이 1회차)':i+'회차까지 냄'}</option>`).join('')}</select>
+        ${done>0?(done>due
+          ? `<div class="tiny" style="margin-top:4px;color:var(--terra-deep)">⚠️ 구입일(${esc(mdLabel(probe.date))}) 기준으로는 아직 ${due}회차까지만 청구됐어요. <b>구입일을 실제 결제한 날로 바꿔주세요</b> — 안 그러면 낸 것으로 친 ${done-due}회분이 결제 예정에서 빠집니다.</div>`
+          : `<div class="tiny" style="margin-top:4px">남은 <b>${left}회 · ${fmt(leftAmt)}</b> · 이번 결제 예정 <b>${fmt(pend)}</b></div>`):''}</div>`;
+    }
   }
   // 간편결제로만 주는 혜택이 이 카드에 있을 때만 물어본다 (없으면 입력을 늘리지 않는다)
   if(c&&(c.perks||[]).some(p=>p.via==='simple')){
@@ -1993,6 +2048,9 @@ function syncTxDraft(){
   if(g('tx-noperf'))txDraft.noPerf=g('tx-noperf').checked;
   txDraft.via=g('tx-via')?(g('tx-via').checked?'simple':''):(txDraft.via||'');
   if(g('tx-months'))txDraft.months=+g('tx-months').value||1;
+  // 이미 낸 회차 — 개월 수를 줄이면 범위를 벗어날 수 있으니 잘라둔다
+  if(g('tx-paid'))txDraft.paidPortions=Math.max(0,Math.min((txDraft.months||1)-1,+g('tx-paid').value||0));
+  if((txDraft.months||1)<=1)txDraft.paidPortions=0;
   if(g('tx-from'))txDraft.fromId=g('tx-from').value;
   if(g('tx-to'))txDraft.toId=g('tx-to').value;
   if(g('tx-pay')&&g('tx-pay').value){const[k,i]=g('tx-pay').value.split('|');txDraft.payKind=k;txDraft.payId=i||'';}
@@ -3316,6 +3374,7 @@ function renderCards(){
         <div class="row"><div><div class="tiny">결제 예정 금액${remain>0?` · 할부 잔여 ${fmtK(remain)}원 별도`:''}</div>
         <div class="num" style="font-weight:800;font-size:1.05rem">${fmt(net)}</div>
         ${billCut>0?`<div class="tiny">사용액 ${fmt(pend)} · <b class="pos">청구할인 −${fmt(billCut)}</b> 반영됨</div>`:''}
+        ${openPending(c)>0?`<div class="tiny">📌 앱 쓰기 전 이용분 ${fmt(openPending(c))} 포함</div>`:''}
         <div class="tiny">매월 ${c.payDay}일 · ${acc?esc(acc.name):'연결 계좌 없음'}에서 출금</div>
         ${(c.autoPre&&c.autoPre.on)?`<div class="tiny" style="margin-top:3px">⚡ 자동 선결제 — ${WEEKDAYS[+c.autoPre.weekday||0]}요일 · ${fmtK(c.autoPre.min||0)}원 이상일 때 · 다음 ${esc(mdLabel(nextPrepayDate(c)))}</div>`:''}</div>
         <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
@@ -3385,8 +3444,201 @@ function settleCard(id){
     if(t.type!=='expense'||t.payKind!=='card'||t.payId!==c.id)return;
     t.paidPortions=duePortions(t);
   });
+  if(c.open)c.open.pending=0;   // 앱 쓰기 전부터 있던 카드값도 이번에 함께 빠졌다
   c.lastSettled=todayStr();
   commit(disc>0?`결제 처리 · 할인 ${fmt(disc)} 반영`:'결제 처리했어요');
+}
+
+/* ═════════ 시작 마법사 ═════════
+ * 가계부는 0원에서 시작하지 않는다. 오늘 처음 켠 사람에게도 이미 지난달 카드값이 남아
+ * 있고, 전월 실적도 쌓여 있고, 할부도 돌아가고 있다. 그런데 앱은 모든 걸 거래 내역에서
+ * 유도하므로 — 과거가 비어 있으면 '쓸 수 있는 돈'은 부풀려지고 혜택은 전부 잠겨 보인다.
+ *
+ * 그렇다고 과거 내역을 다 입력하게 하면 아무도 끝까지 못 한다. 그래서 필요한 건
+ * '과거 전부'가 아니라 '지금 상태를 말해주는 숫자 몇 개'뿐이라는 데 걸었다.
+ * 다행히 그 숫자들은 카드사·은행 앱 첫 화면에 이미 떠 있다 — 보고 옮겨 적으면 끝난다. */
+let wizStep=0, wizDraft=null;
+const wizDone=()=>!!(S.settings&&S.settings.setupAt);
+/* 아직 안 했고, 쓸 만큼 데이터가 있을 때만 권한다 (빈 앱에 띄우면 할 일이 없다) */
+function renderSetupBanner(){
+  const el=$('setup-banner'); if(!el)return;
+  const has=S.accounts.length||S.cards.length;
+  if(wizDone()||!has){ el.innerHTML=''; return; }
+  /* 안 해도 그만인 상시 안내라 '할 일' 개수로는 세지 않는다 — 동기화 권유와 같은 이유로,
+     영원히 "할 일 1"이 붙으면 배지가 의미를 잃는다 */
+  el.dataset.nag='1';
+  el.innerHTML=`<div class="banner" style="background:var(--blue-soft);border-color:var(--blue);border-left-color:var(--blue)">
+    <div class="b-main">👋 <b>쓰던 걸 그대로 옮겨올까요?</b><br>
+      <span class="tiny">남은 카드값·지난달 실적·진행 중인 할부만 넣으면 오늘부터 숫자가 맞아요 (3분)</span></div>
+    <button class="btn dark sm" onclick="openWizard()">시작</button></div>`;
+}
+function dismissWizard(){
+  S.settings.setupAt=todayStr(); save(); closeModal(); renderHome();
+  toast('나중에 설정 → 시작 설정에서 다시 열 수 있어요');
+}
+function openWizard(){
+  wizStep=0;
+  wizDraft={
+    cards:S.cards.filter(c=>c.type==='credit').map(c=>({
+      id:c.id, name:c.name,
+      pending:(c.open&&c.open.pending)||0,
+      perf:(c.open&&c.open.perf)||0,
+      hasTiers:(c.tiers||[]).length>0 })),
+    inst:[],           // 진행 중 할부 {cardId, memo, amount, months, paid, date}
+  };
+  renderWizard();
+}
+const WIZ_STEPS=['통장','카드','할부','확인'];
+function wizGo(n){
+  wizSync();
+  wizStep=Math.max(0,Math.min(WIZ_STEPS.length-1,n));
+  renderWizard();
+}
+/* 화면을 다시 그리기 전에 지금 입력칸의 값을 초안에 담아둔다 */
+function wizSync(){
+  if(!wizDraft)return;
+  if(wizStep===0){
+    S.accounts.filter(a=>a.type==='checking').forEach(a=>{
+      const el=$('wz-acc-'+a.id); if(el&&el.value!=='')a.balance=Math.round(+el.value||0);
+    });
+  }
+  if(wizStep===1){
+    wizDraft.cards.forEach(c=>{
+      const p=$('wz-pend-'+c.id), f=$('wz-perf-'+c.id);
+      if(p)c.pending=Math.max(0,Math.round(+p.value||0));
+      if(f)c.perf=Math.max(0,Math.round(+f.value||0));
+    });
+  }
+  if(wizStep===2){
+    wizDraft.inst.forEach((x,i)=>{
+      const g=k=>$(`wz-i${i}-${k}`);
+      if(g('memo'))x.memo=g('memo').value;
+      if(g('amt'))x.amount=Math.max(0,Math.round(+g('amt').value||0));
+      if(g('m'))x.months=Math.max(2,Math.min(36,+g('m').value||3));
+      if(g('paid'))x.paid=Math.max(0,Math.min(x.months-1,+g('paid').value||0));
+      if(g('card'))x.cardId=g('card').value;
+    });
+  }
+}
+function wizAddInst(){
+  wizSync();
+  const c=wizDraft.cards[0];
+  wizDraft.inst.push({cardId:c?c.id:'',memo:'',amount:0,months:3,paid:1});
+  renderWizard();
+}
+function wizDelInst(i){ wizSync(); wizDraft.inst.splice(i,1); renderWizard(); }
+/* 할부 회차는 '구입일 기준'으로 세므로, 낸 회차만큼 거슬러 올라간 날짜를 구입일로 쓴다.
+   (이 날짜가 아니면 이미 낸 회차분이 결제 예정에서 통째로 빠져버린다) */
+const wizInstDate=x=>{
+  const d=new Date(); d.setDate(1); d.setMonth(d.getMonth()-Math.max(0,+x.paid||0));
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-15`;
+};
+const wizInstLeft=x=>{
+  const amt=Math.round(+x.amount||0), m=Math.max(2,+x.months||2), p=Math.max(0,Math.min(m-1,+x.paid||0));
+  return amt-Math.floor(amt/m)*p;
+};
+function renderWizard(){
+  const d=wizDraft; if(!d)return;
+  const chk=S.accounts.filter(a=>a.type==='checking');
+  const dots=WIZ_STEPS.map((s,i)=>
+    `<span class="wz-dot ${i===wizStep?'on':(i<wizStep?'done':'')}" onclick="wizGo(${i})">${s}</span>`).join('');
+  let body='';
+  if(wizStep===0){
+    body=`<div class="tiny" style="margin-bottom:12px">은행 앱을 열어 <b>지금 잔액</b>을 그대로 적어주세요. 이 숫자가 '쓸 수 있는 돈'의 출발점이 됩니다.</div>
+      ${chk.length?chk.map(a=>`<div class="field"><label>${esc(a.name)}</label>
+        <input type="number" inputmode="numeric" id="wz-acc-${a.id}" value="${a.balance||''}" placeholder="0"></div>`).join('')
+        :`<div class="empty">입출금 계좌가 아직 없어요.<br>자산 탭에서 먼저 추가해주세요.</div>`}`;
+  }else if(wizStep===1){
+    body=`<div class="tiny" style="margin-bottom:12px">카드 앱 첫 화면에 있는 두 숫자예요. <b>결제 예정 금액</b>과 <b>지난달 이용금액</b>을 그대로 옮기면, 오늘 쓰는 것부터 혜택·결제 예정이 정확해집니다.</div>
+      ${d.cards.length?d.cards.map(c=>`
+        <div class="card tight" style="margin-bottom:10px">
+          <div style="font-weight:700;font-size:.9rem;margin-bottom:8px">${esc(c.name)}</div>
+          <div class="grid2">
+            <div class="field" style="margin-bottom:0"><label>남은 카드값</label>
+              <input type="number" inputmode="numeric" id="wz-pend-${c.id}" value="${c.pending||''}" placeholder="0"></div>
+            <div class="field" style="margin-bottom:0"><label>지난달 이용금액${c.hasTiers?'':' <span class="tiny">(무실적)</span>'}</label>
+              <input type="number" inputmode="numeric" id="wz-perf-${c.id}" value="${c.perf||''}" placeholder="0" ${c.hasTiers?'':'disabled'}></div>
+          </div>
+          ${c.hasTiers?'':`<div class="tiny" style="margin-top:6px">실적 조건이 없는 카드라 지난달 금액은 필요 없어요.</div>`}
+        </div>`).join('')
+        :`<div class="empty">등록된 신용카드가 없어요.<br>체크카드만 쓰신다면 이 단계는 넘어가세요.</div>`}
+      <div class="tiny">💡 할부가 섞여 있다면 <b>다음 단계</b>에서 따로 넣습니다 — 여기 '남은 카드값'에는 <b>할부를 뺀 금액</b>만 적어주세요.</div>`;
+  }else if(wizStep===2){
+    body=`<div class="tiny" style="margin-bottom:12px">진행 중인 할부가 있으면 넣어주세요. 남은 회차만 결제 예정에 잡히고, <b>앞으로 몇 달에 걸쳐 얼마가 빠지는지</b>가 맞아집니다.</div>
+      ${d.inst.map((x,i)=>`
+        <div class="card tight" style="margin-bottom:10px">
+          <div class="row" style="margin-bottom:8px">
+            <input id="wz-i${i}-memo" value="${esc(x.memo)}" placeholder="예: 노트북" style="flex:1">
+            <button class="btn ghost sm" onclick="wizDelInst(${i})">✕</button></div>
+          <div class="grid2">
+            <div class="field" style="margin-bottom:8px"><label>총 금액</label>
+              <input type="number" inputmode="numeric" id="wz-i${i}-amt" value="${x.amount||''}" placeholder="1200000" oninput="wizSync();renderWizard()"></div>
+            <div class="field" style="margin-bottom:8px"><label>카드</label>
+              <select id="wz-i${i}-card">${d.cards.map(c=>`<option value="${c.id}" ${x.cardId===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></div>
+          </div>
+          <div class="grid2">
+            <div class="field" style="margin-bottom:0"><label>총 개월</label>
+              <select id="wz-i${i}-m" onchange="wizSync();renderWizard()">
+                ${[2,3,4,5,6,10,12,18,24,36].map(n=>`<option value="${n}" ${x.months===n?'selected':''}>${n}개월</option>`).join('')}</select></div>
+            <div class="field" style="margin-bottom:0"><label>이미 낸 회차</label>
+              <select id="wz-i${i}-paid" onchange="wizSync();renderWizard()">
+                ${Array.from({length:x.months},(_,k)=>`<option value="${k}" ${x.paid===k?'selected':''}>${k}회</option>`).join('')}</select></div>
+          </div>
+          ${x.amount>0?`<div class="tiny" style="margin-top:7px">남은 <b>${x.months-x.paid}회 · ${fmt(wizInstLeft(x))}</b> · 구입일은 ${esc(mdLabel(wizInstDate(x)))}로 기록돼요</div>`:''}
+        </div>`).join('')}
+      <button class="btn ghost block" ${d.cards.length?'':'disabled'} onclick="wizAddInst()">＋ 할부 추가</button>
+      ${d.cards.length?'':`<div class="tiny" style="margin-top:8px">신용카드를 먼저 등록해야 할부를 넣을 수 있어요.</div>`}`;
+  }else{
+    const pend=d.cards.reduce((s,c)=>s+(c.pending||0),0);
+    const instLeft=d.inst.filter(x=>x.amount>0).reduce((s,x)=>s+wizInstLeft(x),0);
+    const perfN=d.cards.filter(c=>c.perf>0).length;
+    body=`<div class="tiny" style="margin-bottom:12px">이대로 반영할게요. 숫자는 언제든 카드 관리에서 고칠 수 있어요.</div>
+      <div class="card tight" style="margin-bottom:12px">
+        <div class="row" style="padding:5px 0"><span style="font-size:.88rem">통장 잔액</span>
+          <b class="num">${fmt(chk.reduce((s,a)=>s+accKRW(a),0))}</b></div>
+        <div class="row" style="padding:5px 0"><span style="font-size:.88rem">남은 카드값</span>
+          <b class="num">${fmt(pend)}</b></div>
+        <div class="row" style="padding:5px 0"><span style="font-size:.88rem">진행 중 할부 잔여</span>
+          <b class="num">${fmt(instLeft)}</b></div>
+        <div class="row" style="padding:5px 0"><span style="font-size:.88rem">지난달 실적을 넣은 카드</span>
+          <b class="num">${perfN}장</b></div>
+      </div>
+      <div class="tiny">📌 남은 카드값과 지난달 실적은 <b>거래 내역으로 만들지 않습니다</b> — 앱을 쓰기 전의 소비가 '이번 달 지출' 통계에 섞이면 안 되니까요. 갚을 돈과 혜택 판정에만 들어갑니다.</div>`;
+  }
+  openModal(`${sheetHead('쓰던 걸 그대로 옮기기')}
+    <div class="wz-dots">${dots}</div>
+    ${body}
+    <div class="row" style="gap:8px;margin-top:16px">
+      ${wizStep>0?`<button class="btn ghost" style="flex:1" onclick="wizGo(${wizStep-1})">이전</button>`:
+                  `<button class="btn ghost" style="flex:1" onclick="dismissWizard()">나중에</button>`}
+      ${wizStep<WIZ_STEPS.length-1
+        ? `<button class="btn primary" style="flex:2" onclick="wizGo(${wizStep+1})">다음</button>`
+        : `<button class="btn primary" style="flex:2" onclick="wizApply()">이대로 시작하기</button>`}
+    </div>`);
+}
+function wizApply(){
+  wizSync();
+  const d=wizDraft; if(!d)return;
+  const ym=thisYM();
+  d.cards.forEach(w=>{
+    const c=cardById(w.id); if(!c)return;
+    c.open=Object.assign({ym:'',pending:0,perf:0},c.open||{});
+    c.open.pending=Math.max(0,Math.round(w.pending||0));
+    c.open.perf=w.hasTiers?Math.max(0,Math.round(w.perf||0)):0;
+    if(c.open.pending>0||c.open.perf>0)c.open.ym=ym;
+  });
+  // 할부는 실제 거래로 넣는다 — 그래야 회차·청구할인·선결제가 기존 엔진 그대로 돈다
+  let n=0;
+  d.inst.filter(x=>x.amount>0&&cardById(x.cardId)).forEach(x=>{
+    S.tx.push({id:uid(),type:'expense',date:wizInstDate(x),amount:Math.round(x.amount),
+      cat:'기타',memo:x.memo||'할부',payKind:'card',payId:x.cardId,
+      months:Math.max(2,+x.months||2),paidPortions:Math.max(0,Math.min((+x.months||2)-1,+x.paid||0)),
+      fxAt:fxRate(),defended:true,noPerf:true});   // 과거 소비라 이번 달 실적·과소비 판정에서 제외
+    n++;
+  });
+  S.settings.setupAt=todayStr();
+  _discInvalidate(); save(); closeModal(); renderAll();
+  toast(`옮겼어요${n?` · 할부 ${n}건 포함`:''} ✓`);
 }
 
 /* ═════════ 선결제 ═════════
@@ -3418,10 +3670,17 @@ function prepayAmount(c,list){
   disc=Math.min(gross,Math.round(disc));
   return {gross,disc,net:gross-disc};
 }
+/* 개시분(앱 쓰기 전 카드값)까지 포함한 합계. 개시분은 건별 정보가 없어 할인을 계산할
+   수 없으므로 할인 없이 원금 그대로 더한다 — 없는 할인을 지어내지 않는다. */
+function prepayTotal(c,list,withOpen){
+  const a=prepayAmount(c,list);
+  const op=withOpen?openPending(c):0;
+  return {gross:a.gross+op, disc:a.disc, net:a.net+op, open:op};
+}
 /* 실제 처리. date 를 넘기면 그 날짜로 기록한다
    (자동 선결제는 앱을 늦게 열어도 '지정 요일'에 나간 것으로 남겨야 하므로) */
-function applyPrepay(c,list,how,date){
-  const amt=prepayAmount(c,list);
+function applyPrepay(c,list,how,date,withOpen){
+  const amt=prepayTotal(c,list,withOpen);
   if(amt.gross<=0)return null;
   const d=date||todayStr();
   const a=accById(c.accountId);
@@ -3432,8 +3691,9 @@ function applyPrepay(c,list,how,date){
       memo:`${c.name} 청구할인 (선결제)`,payKind:'card',payId:c.id,cardId:c.id,fxAt:fxRate(),defended:true});
   }
   list.forEach(t=>{t.paidPortions=duePortions(t)});
+  if(amt.open>0&&c.open)c.open.pending=0;
   c.prepays=(c.prepays||[]).concat([{id:uid(),date:d,gross:amt.gross,disc:amt.disc,net:amt.net,
-    n:list.length,how:how||'manual'}]).slice(-60);
+    n:list.length+(amt.open>0?1:0),how:how||'manual'}]).slice(-60);
   return amt;
 }
 /* 가장 최근에 지나간(또는 오늘인) 지정 요일.
@@ -3464,14 +3724,14 @@ function autoPrepayCards(){
     const due=weekdayDate(ap.weekday);
     if(due>today)return;                       // 지정 요일이 아직 안 왔다
     if(ap.lastRun>=due)return;                 // 그 몫은 이미 처리했다
-    const list=prepayables(c), amt=prepayAmount(c,list);
+    const list=prepayables(c), amt=prepayTotal(c,list,true);   // 개시분도 미결제다
     if(amt.gross<(+ap.min||0)){                // 기준 미달 — 카드사도 이 주는 그냥 넘어간다
       ap.lastRun=due; return;
     }
     const a=accById(c.accountId);
     // 잔액이 모자라면 마이너스를 만들지 않고 보류한다 (lastRun 을 올리지 않아 다음에 다시 시도)
     if(a&&accKRW(a)<amt.net){ skipped.push(`${c.name}(잔액 부족)`); return; }
-    applyPrepay(c,list,'auto',due);
+    applyPrepay(c,list,'auto',due,true);
     ap.lastRun=due;
     done.push(`${c.name} ${fmtK(amt.net)}원`);
   });
@@ -3486,26 +3746,38 @@ function autoPrepayCards(){
 let ppCard=null, ppSel=new Set();
 function openPrepayModal(cardId){ ppCard=cardId; ppSel=new Set(); renderPrepayModal(); }
 function ppToggle(id){ ppSel.has(id)?ppSel.delete(id):ppSel.add(id); renderPrepayModal(); }
+/* 개시분(앱 쓰기 전 카드값)은 건별 정보가 없어 한 줄로 묶어 고른다 */
+const PP_OPEN='__open';
 function ppToggleAll(){
-  const list=prepayables(cardById(ppCard));
-  ppSel = (ppSel.size===list.length) ? new Set() : new Set(list.map(t=>t.id));
+  const c=cardById(ppCard), list=prepayables(c);
+  const every=list.map(t=>t.id).concat(openPending(c)>0?[PP_OPEN]:[]);
+  ppSel = (ppSel.size===every.length) ? new Set() : new Set(every);
   renderPrepayModal();
 }
 function renderPrepayModal(){
   const c=cardById(ppCard); if(!c)return;
   const list=prepayables(c);
+  const op=openPending(c), openOn=ppSel.has(PP_OPEN);
   const sel=list.filter(t=>ppSel.has(t.id));
-  const amt=prepayAmount(c,sel), all=prepayAmount(c,list);
+  const amt=prepayTotal(c,sel,openOn), all=prepayTotal(c,list,op>0);
   const a=accById(c.accountId), bal=a?accKRW(a):0;
   const short=!!a&&amt.net>bal;
+  const nSel=sel.length+(openOn?1:0), nAll=list.length+(op>0?1:0);
+  const openRow=op>0?`<label class="row" style="padding:8px 0;gap:10px;cursor:pointer;border-bottom:1px solid var(--line)">
+      <input type="checkbox" style="width:auto;flex:none" ${openOn?'checked':''} onchange="ppToggle('${PP_OPEN}')">
+      <span style="flex:1;min-width:0">
+        <span style="font-size:.86rem;font-weight:600">📌 이전 이용분</span><br>
+        <span class="tiny">앱을 쓰기 전 사용분 — 건별 내역이 없어 한 번에 갚아요</span>
+      </span>
+      <b class="num" style="font-size:.88rem;white-space:nowrap">${fmt(op)}</b></label>`:'';
   openModal(`${sheetHead('선결제')}
     <div class="tiny" style="margin:-4px 2px 12px">청구일 전에 미리 갚을 내역을 고르세요. 고른 만큼 ${a?`<b>${esc(a.name)}</b>에서 바로 빠지고`:'기록되고'}, 결제 예정 금액이 그만큼 줄어요.</div>
-    ${list.length?`
+    ${nAll?`
       <div class="row" style="margin-bottom:8px">
-        <span class="tiny">미결제 ${list.length}건 · 전체 ${fmt(all.net)}</span>
-        <button class="btn ghost sm" onclick="ppToggleAll()">${sel.length===list.length?'전체 해제':'전체 선택'}</button></div>
+        <span class="tiny">미결제 ${nAll}건 · 전체 ${fmt(all.net)}</span>
+        <button class="btn ghost sm" onclick="ppToggleAll()">${nSel===nAll?'전체 해제':'전체 선택'}</button></div>
       <div class="card tight" style="margin-bottom:12px;max-height:44vh;overflow-y:auto">
-        ${list.map(t=>{
+        ${openRow}${list.map(t=>{
           const p=pendingOfTx(t), on=ppSel.has(t.id), inst=(t.months||1)>1;
           return`<label class="row" style="padding:8px 0;gap:10px;cursor:pointer;border-bottom:1px solid var(--line)">
             <input type="checkbox" style="width:auto;flex:none" ${on?'checked':''} onchange="ppToggle('${t.id}')">
@@ -3516,7 +3788,7 @@ function renderPrepayModal(){
             <b class="num" style="font-size:.88rem;white-space:nowrap">${fmt(p)}</b></label>`}).join('')}
       </div>
       <div class="card tight" style="margin-bottom:12px">
-        <div class="row"><span style="font-size:.86rem">고른 내역 ${sel.length}건</span><b class="num">${fmt(amt.gross)}</b></div>
+        <div class="row"><span style="font-size:.86rem">고른 내역 ${nSel}건</span><b class="num">${fmt(amt.gross)}</b></div>
         ${amt.disc>0?`<div class="row" style="padding-top:5px"><span class="tiny">청구할인</span><b class="num tiny pos">−${fmt(amt.disc)}</b></div>`:''}
         <div class="divider"></div>
         <div class="row"><b style="font-size:.9rem">지금 나갈 돈</b>
@@ -3525,8 +3797,8 @@ function renderPrepayModal(){
            :`<div class="tiny" style="margin-top:5px;color:var(--terra-deep)">연결 계좌가 없어 기록만 됩니다.</div>`}
         ${short?`<div class="tiny" style="margin-top:5px;color:var(--terra-deep)">⚠️ 잔액이 ${fmt(amt.net-bal)} 모자라요.</div>`:''}
       </div>
-      <button class="btn primary block" ${sel.length?'':'disabled'} onclick="doPrepaySelected()">
-        ${sel.length?`${fmt(amt.net)} 선결제하기`:'갚을 내역을 골라주세요'}</button>`
+      <button class="btn primary block" ${nSel?'':'disabled'} onclick="doPrepaySelected()">
+        ${nSel?`${fmt(amt.net)} 선결제하기`:'갚을 내역을 골라주세요'}</button>`
     :`<div class="empty">미결제 내역이 없어요.<br>이미 다 갚았거나 아직 사용 내역이 없습니다.</div>`}
     ${(c.prepays||[]).length?`<div class="sec-title">선결제 이력</div>
       <div class="card tight">${c.prepays.slice().reverse().slice(0,6).map(p=>`
@@ -3537,11 +3809,12 @@ function renderPrepayModal(){
 function doPrepaySelected(){
   const c=cardById(ppCard); if(!c)return;
   const list=prepayables(c).filter(t=>ppSel.has(t.id));
-  if(!list.length)return;
-  const amt=prepayAmount(c,list), a=accById(c.accountId);
+  const openOn=ppSel.has(PP_OPEN)&&openPending(c)>0;
+  if(!list.length&&!openOn)return;
+  const amt=prepayTotal(c,list,openOn), a=accById(c.accountId);
   if(a&&accKRW(a)<amt.net&&
      !confirm(`${a.name} 잔액이 ${fmt(amt.net-accKRW(a))} 모자라요.\n그래도 선결제할까요? (잔액이 마이너스가 됩니다)`))return;
-  applyPrepay(c,list,'manual');
+  applyPrepay(c,list,'manual',null,openOn);
   closeModal();
   commit(`${fmt(amt.net)} 선결제했어요`);
 }
@@ -3561,6 +3834,14 @@ function syncCardDraft(){
   if(g('cd-fee'))cardDraft.annualFee=Math.round(+g('cd-fee').value||0);
   if(g('cd-issued'))cardDraft.issued=g('cd-issued').value;
   if(g('cd-exempt'))cardDraft.exemptM=Math.max(0,Math.min(3,+g('cd-exempt').value||0));
+  if(g('cd-noinst'))cardDraft.noInstPerk=g('cd-noinst').checked;
+  if(g('cd-open-pend')||g('cd-open-perf')){
+    const o=cardDraft.open=Object.assign({ym:'',pending:0,perf:0},cardDraft.open||{});
+    if(g('cd-open-pend'))o.pending=Math.max(0,Math.round(+g('cd-open-pend').value||0));
+    if(g('cd-open-perf'))o.perf=Math.max(0,Math.round(+g('cd-open-perf').value||0));
+    // 어느 달을 '시작'으로 볼지는 처음 값을 넣을 때 고정한다
+    if(!o.ym&&(o.pending>0||o.perf>0))o.ym=thisYM();
+  }
   if(g('cd-ap-on')){
     const ap=cardDraft.autoPre=Object.assign(defAutoPre(),cardDraft.autoPre||{});
     ap.on=g('cd-ap-on').checked;
@@ -3608,7 +3889,7 @@ function cardPick(q){
     const from=after.map((e,i)=>({e,p:e.p,d:Math.round(e.est-before[i].est)}))
       .filter(x=>x.d>0).sort((a,b)=>b.d-a.d);
     const blocked=after.map((e,i)=>({e,p:e.p,d:Math.round(e.est-before[i].est)}))
-      .filter(x=>x.d<=0&&perkMatch(x.p,hp)&&(x.e.active?x.e.capped:true));
+      .filter(x=>x.d<=0&&perkMatch(x.p,hp,c)&&(x.e.active?x.e.capped:true));
     // 이 결제로 연속일이 채워져 2배가 붙는지
     const streakUp=after.some((e,i)=>(e.p.boost||0)>0&&(e.p.streakDays||0)>1&&e.boostN>before[i].boostN);
     // 전월 실적 진행
@@ -3647,7 +3928,7 @@ function cardStreaks(card,ym){
   return(card.perks||[]).filter(p=>(p.boost||0)>0&&(p.streakDays||0)>1).map(p=>{
     const need=(p.tier===undefined?1:p.tier);
     const active=need===0?true:(tiers.length?activeTier>=need:true);
-    const set=new Set(S.tx.filter(t=>t.type==='expense'&&t.payKind==='card'&&t.payId===card.id&&perkMatch(p,t))
+    const set=new Set(S.tx.filter(t=>t.type==='expense'&&t.payKind==='card'&&t.payId===card.id&&perkMatch(p,t,card))
       .map(t=>t.date));
     const runTo=end=>{let n=0,c=end;while(set.has(c)){n++;c=addDays(c,-1)}return n};
     const rToday=runTo(today), rYst=runTo(yst), N=p.streakDays;
@@ -3877,7 +4158,18 @@ function renderCardModal(){
       ? (tierExemptLeft(c,thisYM())
           ? `🎁 지금 <b style="color:var(--blue)">실적 면제 중</b> — 이번 달은 전월 실적과 상관없이 혜택이 열려요 (${tierExemptLeft(c,thisYM())}개월 남음).`
           : `발급 ${esc(String(c.issued).slice(0,7))} · 면제 기간이 끝나 전월 실적으로 판정해요.`)
-      : '💡 발급일을 넣으면 <b>새 카드는 전월 사용액이 없으니</b> 첫 달 실적을 면제해서 계산해요.'}</div>`:''}
+      : '💡 발급일을 넣으면 <b>새 카드는 전월 사용액이 없으니</b> 첫 달 실적을 면제해서 계산해요.'}</div>
+    ${(()=>{const o=c.open||{ym:'',pending:0,perf:0};return`
+    <div class="sec-title" style="margin-top:6px">앱을 쓰기 전 상태 <span class="tiny">(옮겨오기)</span></div>
+    <div class="grid2">
+      <div class="field"><label>남은 카드값</label>
+        <input type="number" inputmode="numeric" id="cd-open-pend" value="${o.pending||''}" placeholder="0"
+          oninput="syncCardDraft()"></div>
+      <div class="field"><label>지난달 실적</label>
+        <input type="number" inputmode="numeric" id="cd-open-perf" value="${o.perf||''}" placeholder="0"
+          oninput="syncCardDraft()"></div>
+    </div>
+    <div class="tiny" style="margin:-6px 0 12px">가계부는 0원에서 시작하지 않죠. <b>카드 앱 첫 화면</b>의 결제 예정 금액과 지난달 이용금액을 그대로 적으면 오늘부터 숫자가 맞습니다. ${o.pending>0||o.perf>0?`<br>지금 반영 중 — 남은 카드값 <b>${fmt(o.pending||0)}</b>${o.perf>0?` · 지난달 실적 <b>${fmt(o.perf)}</b>(${esc(prevYM(o.ym||thisYM()))} 기준)`:''}`:''}</div>`})()}`:''}
     <div class="field"><label>실적 구간 (선택 — 무실적 카드는 비워두세요)</label>
       <input id="cd-tiers" value="${esc(c.tiersText)}" placeholder="비워두면 무실적 카드">
       <div class="tiny" style="margin-top:4px">${tiersArr.length
@@ -3885,6 +4177,11 @@ function renderCardModal(){
         : `✅ <b style="color:var(--green)">무실적 카드</b> — 실적 조건 없이 혜택이 항상 적용돼요. 실적 조건이 있는 카드만 금액을 입력하세요.`}</div></div>
     <div class="field"><label>실적 제외 카테고리 (카드사 약관 기준으로 선택)</label>
       <div style="display:flex;flex-wrap:wrap;gap:6px">${EXP_CATS.map(([e,n])=>`<span class="badge ${c.exclCats.includes(n)?'terra':'gray'}" style="cursor:pointer;padding:6px 10px" onclick="toggleExcl('${n}')">${e} ${n}</span>`).join('')}</div></div>
+    <div class="field"><label class="cb-row"><input type="checkbox" id="cd-noinst" ${c.noInstPerk!==false?'checked':''} onchange="syncCardDraft();renderCardModal()">
+      <span>할부 결제는 적립·할인 제외</span></label>
+      <div class="tiny" style="margin-top:4px">${c.noInstPerk!==false
+        ? '대부분의 카드사가 할부에는 혜택을 주지 않아 기본으로 켜 둡니다. <b>전월 실적에는 그대로 포함</b>돼요.'
+        : '할부에도 혜택을 주는 카드예요. 약관을 확인하고 켜 두세요.'}</div></div>
     <div class="field"><label>혜택 (${c.perks.length}개)</label>
       ${c.perks.map((p,i)=>`<div class="row" style="padding:8px 10px;background:var(--bg);border-radius:10px;margin-bottom:6px">
         <span style="font-size:.82rem;line-height:1.45"><b>${esc(p.name)}</b><br><span class="tiny">${perkMerchants(p).length?'가맹점 '+esc(String(p.merchants).slice(0,32)):p.cat} · ${p.kind==='percent'?p.value+'%':fmtK(p.value)+'원/건'}${(p.boost||0)>0?` → <b style="color:var(--terra-deep)">${p.kind==='percent'?p.boost+'%':fmtK(p.boost)+'원'}</b>(${p.streakDays||1}일 연속)`:''}${p.via==='simple'?' · 간편결제':(p.via==='normal'?' · 간편결제 제외':'')}${(p.capM||0)>0?' · 한도 '+fmtK(p.capM):''}${(p.minAmt||0)>0?' · 건당 '+fmtK(p.minAmt)+'↑':''}${(p.maxCnt||0)>0?' · 월'+p.maxCnt+'회':''}${p.tier===0?' · 실적무관':((p.tier||1)>1?' · '+p.tier+'구간':'')}${p.bill?' · <b style="color:var(--terra-deep)">청구할인</b>':''}</span></span>
@@ -6120,6 +6417,7 @@ function openSettings(){
       <button class="btn ghost" onclick="openCatModal('exp')">🗂️ 카테고리 관리</button>
       <button class="btn ghost" onclick="openFixCheckModal()">🩺 데이터 점검</button>
     </div>
+    <button class="btn ghost block" style="margin-bottom:14px" onclick="openWizard()">🚚 쓰던 걸 그대로 옮기기 (남은 카드값·실적·할부)</button>
     <div class="field"><label>Gemini API 키 ${(window.Sync&&Sync.aiReady&&Sync.aiReady())?'(선택 · 클라우드 로그인 시 불필요)':'(무료)'}</label>
       <input id="st-key" type="password" placeholder="AIza…" value="${esc(S.settings.gemini)}">
       <div class="tiny" style="margin-top:5px">${(window.Sync&&Sync.aiReady&&Sync.aiReady())?'☁️ 클라우드에 로그인돼 있어 <b>서버에 등록된 키</b>로 AI가 동작해요 — 이 칸은 비워둬도 됩니다.':'Google AI Studio(aistudio.google.com)에서 무료 발급 → 리포트 AI 해설이 켜져요. 키는 이 기기에만 저장됩니다.'}</div>
