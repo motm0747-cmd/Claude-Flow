@@ -1,2 +1,6 @@
 server.log
 *.log
+tests/.tmp/
+*.png
+!icons/*.png
+!promo/*.png
