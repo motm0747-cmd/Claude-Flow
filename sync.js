@@ -21,8 +21,99 @@
   var REV_KEY  = 'claudeflow_sync_rev';    // 마지막으로 동기화한 리비전(number)
   var DATA_KEY = 'claudeflow_v1';          // ⚠️ index.html 의 KEY 와 반드시 동일
   var BACKUP_KEY = 'claudeflow_conflict_backup';
+  var BASE_KEY = 'claudeflow_sync_base';   // 마지막으로 동기화가 끝난 시점의 데이터(3-way 병합 기준)
   var TABLE    = 'flow_state';
+  var CAS_FN   = 'flow_state_cas';         // 조건부 저장 RPC (schema.sql 참고)
   var DEBOUNCE = 1500;                      // 저장 후 클라우드 업로드까지 대기(ms)
+
+  /* ═══════════════════════════════════════════════════════════════════
+   * 3-way 병합
+   *
+   * 두 기기가 같은 시점에서 각자 기록하면, 예전에는 나중에 저장한 쪽이 상대 것을
+   * 통째로 덮어썼다. 이제 서버가 거절하므로 여기서 합친다.
+   *
+   * 기준(base) = 마지막으로 동기화가 끝난 시점의 데이터. 이게 있어야
+   * "내가 지운 것"과 "상대가 추가한 것"을 구분할 수 있다 —
+   * 기준 없이 합치면 지운 항목이 되살아난다.
+   * ═══════════════════════════════════════════════════════════════════ */
+
+  // id 를 가진 레코드 배열들 (거래·계좌·카드 …)
+  var ID_LISTS = ['tx', 'accounts', 'cards', 'fixed', 'goals', 'debts', 'invLogs',
+                  'wish', 'quick', 'recon', 'askLog'];
+  // 키(YYYY-MM 등)로 찾는 맵들
+  var KEY_MAPS = ['reports', 'briefs', 'budgets', 'netHist', 'scores'];
+
+  var eq = function (a, b) { return JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b); };
+  var byId = function (arr) {
+    var m = {};
+    (arr || []).forEach(function (x) { if (x && x.id != null) m[x.id] = x; });
+    return m;
+  };
+
+  /* 한 항목의 3-way 판정. 없으면 undefined 를 반환(= 삭제) */
+  function pick3(base, mine, theirs) {
+    var hasB = base !== undefined, hasM = mine !== undefined, hasT = theirs !== undefined;
+    if (!hasB) {                                   // 기준에 없던 것 = 누군가 새로 추가
+      if (hasM && hasT) return eq(mine, theirs) ? mine : theirs;  // 둘 다 추가(드묾) → 서버 것
+      return hasM ? mine : theirs;
+    }
+    if (!hasM && !hasT) return undefined;          // 둘 다 지움
+    if (!hasM) return eq(base, theirs) ? undefined : theirs;  // 내가 지움 (상대가 안 건드렸으면 삭제 확정)
+    if (!hasT) return eq(base, mine) ? undefined : mine;      // 상대가 지움
+    if (eq(mine, theirs)) return mine;
+    if (eq(base, mine))  return theirs;            // 나는 그대로 → 상대 변경 채택
+    if (eq(base, theirs)) return mine;             // 상대는 그대로 → 내 변경 채택
+    return theirs;                                 // 둘 다 바꿈 → 서버 쪽을 택하고 개수를 보고한다
+  }
+
+  /* base·mine·theirs 를 합친다. 두 번째 반환값은 사용자에게 보여줄 요약. */
+  function merge3(base, mine, theirs) {
+    base = base || {}; mine = mine || {}; theirs = theirs || {};
+    var out = {}, sum = { added: 0, fromCloud: 0, removed: 0, clashed: 0, fields: [] };
+    var keys = {};
+    [base, mine, theirs].forEach(function (o) { Object.keys(o || {}).forEach(function (k) { keys[k] = 1; }); });
+
+    Object.keys(keys).forEach(function (k) {
+      var b = base[k], m = mine[k], t = theirs[k];
+
+      if (ID_LISTS.indexOf(k) >= 0) {
+        var mb = byId(b), mm = byId(m), mt = byId(t), ids = {};
+        [mb, mm, mt].forEach(function (o) { Object.keys(o).forEach(function (i) { ids[i] = 1; }); });
+        var list = [];
+        Object.keys(ids).forEach(function (i) {
+          var v = pick3(mb[i], mm[i], mt[i]);
+          if (v === undefined) { if (mb[i] !== undefined) sum.removed++; return; }
+          list.push(v);
+          if (mb[i] === undefined) { if (mm[i] === undefined) sum.fromCloud++; else sum.added++; }
+          else if (mm[i] !== undefined && mt[i] !== undefined && !eq(mm[i], mt[i]) &&
+                   !eq(mb[i], mm[i]) && !eq(mb[i], mt[i])) sum.clashed++;
+        });
+        // 원래 순서(날짜·추가 순)를 최대한 지킨다 — 상대 것을 뒤에 붙인다
+        var order = {}, n = 0;
+        (m || []).concat(t || []).forEach(function (x) { if (x && x.id != null && order[x.id] === undefined) order[x.id] = n++; });
+        list.sort(function (a, b2) { return (order[a.id] == null ? 1e9 : order[a.id]) - (order[b2.id] == null ? 1e9 : order[b2.id]); });
+        out[k] = list;
+        return;
+      }
+
+      if (KEY_MAPS.indexOf(k) >= 0) {
+        var o = {}, kk = {};
+        [b, m, t].forEach(function (x) { Object.keys(x || {}).forEach(function (i) { kk[i] = 1; }); });
+        Object.keys(kk).forEach(function (i) {
+          var v = pick3((b || {})[i], (m || {})[i], (t || {})[i]);
+          if (v !== undefined) o[i] = v;
+        });
+        out[k] = o;
+        return;
+      }
+
+      // 그 밖(settings·alloc·cats·flowAI …) — 통째로 3-way
+      var v2 = pick3(b, m, t);
+      if (v2 !== undefined) out[k] = v2;
+      if (m !== undefined && t !== undefined && !eq(m, t) && !eq(b, m) && !eq(b, t)) sum.fields.push(k);
+    });
+    return { data: out, summary: sum };
+  }
 
   // VAPID 공개키(base64url) → Uint8Array (pushManager.subscribe 용)
   function urlB64ToUint8Array(base64String) {
@@ -83,7 +174,13 @@
     /* ── 상태 구독 ── */
     on: function (fn) { this.listeners.push(fn); },
     emit: function () { var self = this; this.listeners.forEach(function (f) { try { f(self); } catch (e) {} }); },
-    setStatus: function (s, err) { this.status = s; if (err !== undefined) this.lastError = err || ''; this.emit(); },
+    setStatus: function (s, err) {
+      this.status = s;
+      if (err !== undefined) this.lastError = err || '';
+      // 성공했으면 지난 오류 문구는 지운다. 남겨두면 다 나은 뒤에도 경고가 계속 붙는다.
+      else if (s === 'synced') this.lastError = '';
+      this.emit();
+    },
 
     /* ── 로컬 데이터 헬퍼 ── */
     readLocal: function () { try { return JSON.parse(localStorage.getItem(DATA_KEY) || 'null'); } catch (e) { return null; } },
@@ -252,6 +349,7 @@
         localStorage.setItem(DATA_KEY, JSON.stringify(row.data));
         this.knownRev = row.rev || 0;
         localStorage.setItem(REV_KEY, String(this.knownRev));
+        localStorage.setItem(BASE_KEY, JSON.stringify(row.data));   // 다음 병합의 기준
       } catch (e) {}
       if (applyToApp && typeof window.reloadStateFromStorage === 'function') {
         try { window.reloadStateFromStorage(); } catch (e) {}
@@ -272,8 +370,10 @@
             { event: '*', schema: 'public', table: 'flow_state', filter: 'user_id=eq.' + uid },
             function (payload) {
               var r = (payload && payload.new && typeof payload.new.rev === 'number') ? payload.new.rev : Infinity;
-              // 내가 방금 올린 변경(같은 rev)은 무시. 더 큰 rev면 다른 기기 → 받아오기.
-              if (r > self.knownRev) self.pull(true);
+              /* 내가 방금 올린 것(내 knownRev 와 같은 rev)만 무시하고, 나머지는 받아온다.
+                 예전엔 'r > knownRev' 였는데, 두 기기가 같은 rev 를 만들 수 있었기 때문에
+                 상대의 변경을 영영 못 받는 구멍이 있었다. */
+              if (r !== self.knownRev) self.pull(true);
             })
           .subscribe();
       } catch (e) { /* realtime 실패해도 앱·동기화는 정상 */ }
@@ -295,27 +395,105 @@
       this._timer = setTimeout(function () { self.push(); }, DEBOUNCE);
     },
 
+    /* 조건부 저장 — 내가 알고 있던 리비전일 때만 쓴다.
+       그 사이 다른 기기가 바꿨으면 서버가 거절하고 현재 값을 돌려주며, 여기서 합친다. */
     push: function (force) {
       if (!this.session || !this.client) return Promise.resolve();
       if (!this.dirty && !force) return Promise.resolve();
       var local = this.readLocal();
       // 실수로 빈 데이터를 올려 클라우드를 날리는 것 방지(강제 시드는 예외)
       if (this.isEmpty(local) && !force) { this.dirty = false; this.setStatus('synced'); return Promise.resolve(); }
-      var self = this;
-      var nextRev = (this.knownRev || 0) + 1;
+      var self = this, expected = this.knownRev || 0;
       this.setStatus('syncing');
+
+      return this.client.rpc(CAS_FN, { p_data: local, p_expected: expected })
+        .then(function (res) {
+          if (res.error) {
+            if (self._casMissing(res.error)) return self._pushLegacy(local, expected);
+            throw res.error;
+          }
+          var row = Array.isArray(res.data) ? res.data[0] : res.data;
+          if (!row) throw new Error('저장 응답이 비어 있어요');
+          if (row.ok) { self._afterPush(local, row.rev); return; }
+          return self._resolveConflict(local, row);        // ← 동시 편집
+        })
+        .catch(function (e) { self.setStatus('error', self._msg(e)); });
+    },
+
+    /* 스키마 업데이트를 아직 안 한 프로젝트 — 예전 방식으로 동작시키되 사실대로 알린다 */
+    _casMissing: function (e) {
+      var s = ((e && (e.code || '')) + ' ' + (e && (e.message || ''))).toLowerCase();
+      return s.indexOf('pgrst202') >= 0 || s.indexOf('could not find the function') >= 0 ||
+             s.indexOf('does not exist') >= 0 || s.indexOf('404') >= 0;
+    },
+    _pushLegacy: function (local, expected) {
+      var self = this, nextRev = expected + 1;
+      if (!this._warnedCas) {
+        this._warnedCas = true;
+        try { console.warn('[Sync] flow_state_cas 함수가 없어 예전 방식으로 저장합니다. supabase/schema.sql 의 마지막 블록을 실행해주세요.'); } catch (e) {}
+      }
       return this.client.from(TABLE).upsert({
-        user_id: this.session.user.id,
-        data: local,
-        rev: nextRev,
-        updated_at: new Date().toISOString()
+        user_id: this.session.user.id, data: local, rev: nextRev, updated_at: new Date().toISOString()
       }, { onConflict: 'user_id' }).then(function (res) {
         if (res.error) throw res.error;
-        self.knownRev = nextRev;
-        try { localStorage.setItem(REV_KEY, String(nextRev)); } catch (e) {}
-        self.dirty = false;
-        self.setStatus('synced');
-      }).catch(function (e) { self.setStatus('error', self._msg(e)); });
+        self._afterPush(local, nextRev);
+        self.setStatus('synced', '⚠️ 동시 편집 보호가 꺼져 있어요 — schema.sql 을 다시 실행해주세요');
+      });
+    },
+
+    _afterPush: function (data, rev) {
+      this.knownRev = rev;
+      try {
+        localStorage.setItem(REV_KEY, String(rev));
+        localStorage.setItem(BASE_KEY, JSON.stringify(data));   // 다음 병합의 기준
+      } catch (e) {}
+      this.dirty = false;
+      this.setStatus('synced');
+    },
+
+    readBase: function () { try { return JSON.parse(localStorage.getItem(BASE_KEY) || 'null'); } catch (e) { return null; } },
+
+    /* 동시 편집 — 양쪽을 합쳐서 다시 올린다. 무엇이 합쳐졌는지는 사용자에게 알린다. */
+    _resolveConflict: function (local, row) {
+      var self = this;
+      var theirs = row.data;
+      if (theirs == null) {                        // 서버가 값을 못 준 경우 → 받아와서 다시 시도
+        return this.pull(true);
+      }
+      this.backupLocal(local);                     // 합치기 전 내 상태는 항상 남긴다
+      var base = this.readBase();
+      var merged = merge3(base, local, theirs);
+      var s = merged.summary;
+
+      return this.client.rpc(CAS_FN, { p_data: merged.data, p_expected: row.rev })
+        .then(function (res2) {
+          if (res2.error) throw res2.error;
+          var r2 = Array.isArray(res2.data) ? res2.data[0] : res2.data;
+          if (!r2 || !r2.ok) {                     // 합치는 사이 또 바뀜 → 한 번 더
+            if ((self._retry = (self._retry || 0) + 1) > 3) throw new Error('동기화가 계속 부딪혀요. 잠시 후 다시 시도해주세요');
+            return self.push(true);
+          }
+          self._retry = 0;
+          try { localStorage.setItem(DATA_KEY, JSON.stringify(merged.data)); } catch (e) {}
+          self._afterPush(merged.data, r2.rev);
+          if (typeof window.reloadStateFromStorage === 'function') {
+            try { window.reloadStateFromStorage(); } catch (e) {}
+          }
+          self.lastMerge = s;
+          self._emitMerge(s);
+        });
+    },
+
+    /* 합친 결과를 앱에 알린다 — 조용히 지나가면 사용자는 뭐가 바뀌었는지 알 수 없다 */
+    _emitMerge: function (s) {
+      var parts = [];
+      if (s.fromCloud) parts.push('다른 기기 ' + s.fromCloud + '건');
+      if (s.added)     parts.push('이 기기 ' + s.added + '건');
+      if (s.removed)   parts.push('삭제 ' + s.removed + '건');
+      var msg = parts.length ? ('동기화 충돌을 합쳤어요 — ' + parts.join(' · ')) : '동기화 충돌을 합쳤어요';
+      if (s.clashed || s.fields.length) msg += ' · 같은 항목 ' + (s.clashed + s.fields.length) + '건은 다른 기기 것을 따랐어요';
+      try { if (typeof window.toast === 'function') window.toast(msg); } catch (e) {}
+      try { console.info('[Sync] merge', s); } catch (e) {}
     },
 
     /* 클라우드 데이터 비우기 — 전체 초기화용.
@@ -333,7 +511,10 @@
           self.knownRev = nextRev;
           self.dirty = false;
           clearTimeout(self._timer);                  // 대기 중이던 업로드 취소
-          try { localStorage.setItem(REV_KEY, String(nextRev)); } catch (e) {}
+          try {
+            localStorage.setItem(REV_KEY, String(nextRev));
+            localStorage.setItem(BASE_KEY, JSON.stringify(empty));
+          } catch (e) {}
         });
       });
     },
@@ -359,9 +540,7 @@
           user_id: self.session.user.id, data: local, rev: nextRev, updated_at: new Date().toISOString()
         }, { onConflict: 'user_id' }).then(function (res) {
           if (res.error) throw res.error;
-          self.knownRev = nextRev; self.dirty = false;
-          try { localStorage.setItem(REV_KEY, String(nextRev)); } catch (e) {}
-          self.setStatus('synced');
+          self._afterPush(local, nextRev);
         });
       }).catch(function (e) { self.setStatus('error', self._msg(e)); throw e; });
     },

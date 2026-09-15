@@ -867,7 +867,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20260914-start';
+const APP_BUILD='20260915-sync';
 const KEY='claudeflow_v1';
 const store={
   ok:(()=>{try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true}catch(e){return false}})(),
@@ -6857,7 +6857,7 @@ function syncStatusText(){
     case 'connecting': return '연결 중…';
     case 'signedout': return '로그인 필요';
     case 'syncing': return '동기화 중…';
-    case 'synced': return '동기화됨'+(Sync.email()?' · '+Sync.email():'');
+    case 'synced': return (Sync.lastError?'동기화됨 · ⚠️':'동기화됨')+(Sync.email()?' · '+Sync.email():'');
     case 'error': return '오류';
     default: return '';
   }
@@ -6883,6 +6883,12 @@ function renderSyncBanner(){
       }else{
         el.innerHTML=`<div class="card tight row"><div style="font-size:.86rem;min-width:0"><b>☁️ 기기 간 동기화</b><br><span class="tiny">폰·패드·PC가 같은 데이터를 공유해요</span></div><button class="btn primary sm" style="flex-shrink:0" onclick="openSettings()">로그인</button></div>`;
       }
+    } else if(Sync.status==='synced'&&Sync.lastError){
+      // 조건부 저장(CAS) 함수가 없는 프로젝트 — 동시 편집 보호가 꺼진 상태다
+      el.dataset.nag='';
+      el.innerHTML=`<div class="card tight" style="background:var(--gold-soft);border-color:var(--gold)">
+        <div style="font-size:.82rem;color:var(--gold)">☁️ ${esc(Sync.lastError)}</div>
+        <div class="tiny" style="margin-top:3px;color:var(--sub)">두 기기에서 동시에 기록하면 한쪽이 사라질 수 있어요. Supabase → SQL Editor 에서 <b>supabase/schema.sql</b> 의 마지막 블록을 실행해주세요.</div></div>`;
     } else { el.innerHTML=''; }
   }
   const line=$('sync-status-line'); if(line){ line.textContent=syncStatusText(); line.style.color=syncStatusColor(); }
