@@ -49,11 +49,14 @@
     return m;
   };
 
-  /* 한 항목의 3-way 판정. 없으면 undefined 를 반환(= 삭제) */
-  function pick3(base, mine, theirs) {
+  /* 한 항목의 3-way 판정. 없으면 undefined 를 반환(= 삭제).
+     mineFirst = 기준 자체가 없는 상태. 누가 새 값인지 알 길이 없는데, 이 기기는 사용자가
+     지금 보고 있고 방금 입력한 화면이다. 그럴 때 서버 것으로 덮으면 "방금 친 값이
+     0으로 되돌아가는" 최악이 된다 — local-first 원칙대로 내 것을 남긴다. */
+  function pick3(base, mine, theirs, mineFirst) {
     var hasB = base !== undefined, hasM = mine !== undefined, hasT = theirs !== undefined;
     if (!hasB) {                                   // 기준에 없던 것 = 누군가 새로 추가
-      if (hasM && hasT) return eq(mine, theirs) ? mine : theirs;  // 둘 다 추가(드묾) → 서버 것
+      if (hasM && hasT) return eq(mine, theirs) ? mine : (mineFirst ? mine : theirs);
       return hasM ? mine : theirs;
     }
     if (!hasM && !hasT) return undefined;          // 둘 다 지움
@@ -67,8 +70,9 @@
 
   /* base·mine·theirs 를 합친다. 두 번째 반환값은 사용자에게 보여줄 요약. */
   function merge3(base, mine, theirs) {
+    var noBase = (base == null);                   // 기준을 아직 한 번도 저장하지 못한 기기
     base = base || {}; mine = mine || {}; theirs = theirs || {};
-    var out = {}, sum = { added: 0, fromCloud: 0, removed: 0, clashed: 0, fields: [] };
+    var out = {}, sum = { added: 0, fromCloud: 0, removed: 0, clashed: 0, fields: [], noBase: noBase };
     var keys = {};
     [base, mine, theirs].forEach(function (o) { Object.keys(o || {}).forEach(function (k) { keys[k] = 1; }); });
 
@@ -80,10 +84,14 @@
         [mb, mm, mt].forEach(function (o) { Object.keys(o).forEach(function (i) { ids[i] = 1; }); });
         var list = [];
         Object.keys(ids).forEach(function (i) {
-          var v = pick3(mb[i], mm[i], mt[i]);
+          var v = pick3(mb[i], mm[i], mt[i], noBase);
           if (v === undefined) { if (mb[i] !== undefined) sum.removed++; return; }
           list.push(v);
-          if (mb[i] === undefined) { if (mm[i] === undefined) sum.fromCloud++; else sum.added++; }
+          if (mb[i] === undefined) {
+            if (mm[i] === undefined) sum.fromCloud++;
+            else if (mt[i] !== undefined && !eq(mm[i], mt[i])) sum.clashed++;   // 기준 없이 부딪힘
+            else sum.added++;
+          }
           else if (mm[i] !== undefined && mt[i] !== undefined && !eq(mm[i], mt[i]) &&
                    !eq(mb[i], mm[i]) && !eq(mb[i], mt[i])) sum.clashed++;
         });
@@ -99,7 +107,7 @@
         var o = {}, kk = {};
         [b, m, t].forEach(function (x) { Object.keys(x || {}).forEach(function (i) { kk[i] = 1; }); });
         Object.keys(kk).forEach(function (i) {
-          var v = pick3((b || {})[i], (m || {})[i], (t || {})[i]);
+          var v = pick3((b || {})[i], (m || {})[i], (t || {})[i], noBase);
           if (v !== undefined) o[i] = v;
         });
         out[k] = o;
@@ -107,7 +115,7 @@
       }
 
       // 그 밖(settings·alloc·cats·flowAI …) — 통째로 3-way
-      var v2 = pick3(b, m, t);
+      var v2 = pick3(b, m, t, noBase);
       if (v2 !== undefined) out[k] = v2;
       if (m !== undefined && t !== undefined && !eq(m, t) && !eq(b, m) && !eq(b, t)) sum.fields.push(k);
     });
@@ -337,7 +345,10 @@
             if (self.isEmpty(local)) return self.adopt(row, applyToApp);
             self.dirty = true; return self.push(true);
           } else {
-            self.setStatus('synced'); // 같은 리비전 → 동일하다고 간주
+            // 같은 리비전 = 로컬과 클라우드가 같은 시점. 그게 바로 다음 병합의 기준이다.
+            // (예전 버전에서 올라온 기기는 이 경로로 기준을 처음 확보한다)
+            try { localStorage.setItem(BASE_KEY, JSON.stringify(row.data)); } catch (e) {}
+            self.setStatus('synced');
           }
         })
         .catch(function (e) { self.setStatus('error', self._msg(e)); });
@@ -496,7 +507,10 @@
       if (s.added)     parts.push('이 기기 ' + s.added + '건');
       if (s.removed)   parts.push('삭제 ' + s.removed + '건');
       var msg = parts.length ? ('동기화 충돌을 합쳤어요 — ' + parts.join(' · ')) : '동기화 충돌을 합쳤어요';
-      if (s.clashed || s.fields.length) msg += ' · 같은 항목 ' + (s.clashed + s.fields.length) + '건은 다른 기기 것을 따랐어요';
+      if (s.clashed || s.fields.length) {
+        msg += ' · 같은 항목 ' + (s.clashed + s.fields.length) + '건은 '
+             + (s.noBase ? '이 기기 것을 남겼어요' : '다른 기기 것을 따랐어요');
+      }
       try { if (typeof window.toast === 'function') window.toast(msg); } catch (e) {}
       try { console.info('[Sync] merge', s); } catch (e) {}
     },

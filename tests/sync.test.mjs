@@ -208,6 +208,40 @@ const TX = (id, memo) => ({ id, type: 'expense', date: '2026-09-15', amount: 100
   ok('기준이 없어도 양쪽이 합쳐짐(합집합)', ids.join(',') === 't1,t5,t6', ids.join(','));
 }
 
+/* ══════ ⑤-b 기준이 없을 때 "방금 친 값"이 사라지면 안 된다 ══════
+   claudeflow_sync_base 는 새로 생긴 키라 예전부터 쓰던 기기에는 없다. 그 상태에서
+   충돌하면 무조건 클라우드를 택하게 돼 있어서 — 통장 잔액에 310000 을 넣어도
+   클라우드의 옛 0 으로 되돌아갔다. 실제로 사용자가 겪은 증상이다. */
+{
+  const log = [], srv = makeServer();
+  const ACC = (bal) => ({
+    accounts: [{ id: 'chk', type: 'checking', name: '생활비 통장', balance: bal, cur: 'KRW' }],
+    tx: [], settings: {} });
+  srv.row.data = ACC(0); srv.row.rev = 6;            // 클라우드엔 아직 0
+  const pc = makeDevice('PC', srv, log, { data: ACC(310000), rev: 5 });   // base 없음
+  await pc.Sync.push();
+  ok('기준이 없어도 방금 입력한 잔액이 남음',
+     srv.row.data.accounts[0].balance === 310000, `${srv.row.data.accounts[0].balance}원`);
+  ok('  이 기기 화면에도 그대로', pc.read().accounts[0].balance === 310000,
+     `${pc.read().accounts[0].balance}원`);
+  ok('  기준 없이 부딪혔다는 사실을 알림',
+     (pc.Sync.lastMerge || {}).clashed === 1 && (pc.Sync.lastMerge || {}).noBase === true,
+     JSON.stringify(pc.Sync.lastMerge));
+}
+
+/* ══════ ⑤-c 리비전이 같으면 그 시점을 기준으로 삼는다 ══════
+   (예전 버전에서 올라온 기기가 기준을 처음 확보하는 경로) */
+{
+  const log = [], srv = makeServer();
+  const data = { tx: [TX('t1', '기존')], accounts: [], settings: {} };
+  srv.row.data = data; srv.row.rev = 7;
+  const phone = makeDevice('폰', srv, log, { data, rev: 7 });   // base 없음, rev 는 일치
+  phone.Sync.dirty = false;
+  await phone.Sync.pull();
+  ok('리비전이 같으면 기준이 저장됨', !!phone.store['claudeflow_sync_base'],
+     phone.store['claudeflow_sync_base'] ? '저장됨' : '없음');
+}
+
 /* ══════ ⑥ 따로 설정하지 않아도 보호가 켜져 있다 ══════
    예전엔 DB 함수를 직접 실행해야 했고, 안 한 사람은 조용히 위험한 상태였다.
    지금은 UPDATE 조건만으로 하므로 테이블만 있으면 바로 동작한다. */
