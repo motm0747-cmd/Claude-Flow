@@ -51,7 +51,7 @@ function serve(port, prefix = '') {
 /* 순서: 빠르고 넓은 것 먼저 — 깨졌으면 일찍 알 수 있게 */
 const SUITES = [
   'smoke.mjs', 'invariants.mjs', 'fmt.test.mjs', 'sync.test.mjs', 'edge.test.mjs',
-  'cats.test.mjs', 'entry.test.mjs', 'q.test.mjs',
+  'cats.test.mjs', 'entry.test.mjs', 'q.test.mjs', 'money.test.mjs',
   'perk.test.mjs', 'exempt.test.mjs', 'prepay.test.mjs', 'hana.check.mjs',
   'home.test.mjs', 'ui.test.mjs', 'start.test.mjs', 'feat.test.mjs', 'feat2.test.mjs',
   'inv.test.mjs', 'flow.test.mjs', 'final.mjs',

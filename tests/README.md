@@ -27,6 +27,7 @@ node tests/run.mjs prepay ui    # 이름에 그 글자가 든 것만
 | `smoke` `invariants` `final` | 로드·기본 불변식·최종 점검 |
 | `fmt` | 숫자·날짜 표기 |
 | `cats` `entry` `q` | 카테고리, 입력 보조(맥락 기억·가맹점 학습), 빠른 입력 |
+| `money` | 돈 칸 — 쉼표·₩·원 파싱, 못 읽는 값 거절, 망가진 잔액 복구 |
 | `perk` `exempt` `hana.check` | 카드 혜택 엔진, 발급 첫 달 실적 면제, 하나 MOVING 실제 값 대조 |
 | `prepay` | 선결제 — 매주 자동·건별·잔액 부족 보류 |
 | `start` | 개시 스냅샷·진행 중 할부·시작 마법사·할부 혜택 제외 |

@@ -870,7 +870,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20260916-merge';
+const APP_BUILD='20260916-money';
 const KEY='claudeflow_v1';
 const store={
   ok:(()=>{try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true}catch(e){return false}})(),
@@ -951,6 +951,9 @@ function migrate(){
   if(S.settings.setupAt===undefined)S.settings.setupAt=(S.tx.length>20)?'migrated':'';
   S.accounts.forEach(a=>{
     if(!a.cur)a.cur='KRW';
+    // 잔액이 숫자가 아니면(가져오기·예전 버그 등) 화면이 통째로 비어 보이고 합계가 망가진다.
+    // 0 으로 되살려 최소한 고칠 수 있는 상태로 만든다.
+    if(!Number.isFinite(+a.balance))a.balance=0; else a.balance=+a.balance;
     if(a.type==='invest'){
       // 투자 계좌 분류 — 예전 계좌는 통화로 국내/해외를 짐작한다
       if(!a.invKind)a.invKind=(a.cur&&a.cur!=='KRW')?'overseas':'domestic';
@@ -1091,7 +1094,21 @@ const cardById=id=>S.cards.find(c=>c.id===id);
 /* ── DOM/공통 헬퍼 (중복 제거) ── */
 const $=id=>document.getElementById(id);
 const val=(id,d='')=>{const e=$(id);return e?e.value:d};
-const numVal=(id)=>{const e=$(id);return e?(+e.value||0):0};
+/* ── 돈 입력 파싱 ──────────────────────────────────────────────────────
+ * 사람은 돈을 `310,000` · `₩310000` · `310000원` 처럼 친다. 그런데 type="number" 는
+ * 이런 값을 '무효'로 보고 .value 를 통째로 비워버린다 — 화면에는 친 게 보이는데
+ * 읽으면 빈 문자열이라, 사용자가 넣은 숫자가 조용히 0 으로 저장됐다.
+ * 그래서 돈 칸은 text 로 받고 여기서 직접 읽는다. */
+const numOf=(v)=>{
+  const t=String(v==null?'':v).replace(/[,\s]/g,'').replace(/[₩원$%]/g,'');
+  if(!t)return 0;
+  const n=Number(t);
+  return Number.isFinite(n)?n:NaN;
+};
+const numVal=(id)=>{const e=$(id); if(!e)return 0; const n=numOf(e.value); return Number.isFinite(n)?n:0};
+/* 비어 있으면 0, 뭔가 썼는데 숫자로 못 읽으면 NaN — 조용히 0 으로 저장하지 않으려고 */
+const numValStrict=(id)=>{const e=$(id); if(!e)return 0;
+  const v=String(e.value==null?'':e.value).trim(); return v?numOf(v):0};
 const chkVal=(id,d=false)=>{const e=$(id);return e?e.checked:d};
 function commit(msg){save();closeModal();renderAll();if(msg)toast(msg);}
 function askDel(msg,fn){if(confirm(msg)){fn();}}
@@ -1404,7 +1421,7 @@ function openFxFailModal(err){
       <div class="tiny" style="margin-top:6px;color:var(--sub)">기기에 저장된 HTML 파일을 직접 열면 브라우저 보안정책(CORS)이 외부 요청을 막는 경우가 있어요. 이럴 땐 아래에 직접 입력해주세요 — 나머지 기능은 모두 정상 동작합니다.</div>
     </div>
     <div class="field"><label>1$ 당 원화 (직접 입력)</label>
-      <input type="number" inputmode="decimal" step="any" id="fx-manual" value="${fxRate()}"></div>
+      <input type="text" inputmode="decimal" id="fx-manual" value="${fxRate()}"></div>
     <div class="tiny" style="margin-bottom:12px">네이버에 '환율'을 검색하면 현재 시세를 볼 수 있어요.</div>
     <div style="display:flex;gap:8px">
       <button class="btn ghost" style="flex:1" onclick="fetchFx()">다시 시도</button>
@@ -1552,7 +1569,7 @@ const mdLabel=d=>d.slice(5).replace('-','/');
  * 거래를 만들지 않는다 — 계좌 잔액도 내역도 건드리지 않는 비교일 뿐이다. */
 function buyCheck(amount,months){
   const s=safeSpend();
-  const amt=Math.round(+amount||0);
+  const amt=Math.round(numOf(amount)||0);
   if(!(amt>0))return{valid:false};
   if(!s.ok)return{valid:true,ok:false};
   const m=Math.max(1,Math.min(12,Math.round(+months)||1));
@@ -1571,7 +1588,7 @@ function openBuyModal(){
       <input id="buy-name" placeholder="예: 노트북" maxlength="40"></div>
     <div class="grid2">
       <div class="field"><label>금액</label>
-        <input type="number" inputmode="numeric" id="buy-amt" placeholder="1500000" oninput="renderBuyResult()"></div>
+        <input type="text" inputmode="numeric" id="buy-amt" placeholder="1500000" oninput="renderBuyResult()"></div>
       <div class="field"><label>할부</label>
         <select id="buy-months" onchange="renderBuyResult()">
           ${[1,2,3,6,12].map(n=>`<option value="${n}">${n===1?'일시불':n+'개월'}</option>`).join('')}</select></div>
@@ -1604,7 +1621,7 @@ function renderBuyResult(){
 }
 /* 마음을 정했으면 바로 입력창으로 넘긴다 — 금액을 다시 치게 하지 않는다 */
 function buyToTx(){
-  const amt=Math.round(+($('buy-amt')||{}).value||0);
+  const amt=Math.round(numVal('buy-amt'));
   if(!(amt>0))return toast('금액을 넣어주세요');
   const name=(($('buy-name')||{}).value||'').trim();
   const m=Math.max(1,Math.min(12,+($('buy-months')||{}).value||1));
@@ -1654,7 +1671,7 @@ function openSafeModal(){
         ${s.items.length>10?`<div class="tiny" style="margin-top:6px">외 ${s.items.length-10}건</div>`:''}</div>`:''}
 
     <div class="field"><label>남겨둘 돈 (원)</label>
-      <input type="number" inputmode="numeric" id="sf-buf" value="${s.buffer||''}" placeholder="0">
+      <input type="text" inputmode="numeric" id="sf-buf" value="${s.buffer||''}" placeholder="0">
       <div class="tiny" style="margin-top:5px">💡 통장에 항상 남겨두고 싶은 금액이에요. 여기 넣으면 '쓸 수 있는 돈'에서 미리 빠져요.</div></div>
     <button class="btn primary block" onclick="saveBuffer()">저장</button>`);
 }
@@ -1925,7 +1942,7 @@ function renderTxModal(){
     </div></div>`;
   const dateAmt=`<div class="grid2">
       <div class="field"><label>날짜</label><input type="date" id="tx-date" value="${d.date}"></div>
-      <div class="field"><label>금액 (원)</label><input type="number" inputmode="numeric" id="tx-amt" placeholder="0" value="${d.amount||''}" oninput="txPickHint()"></div>
+      <div class="field"><label>금액 (원)</label><input type="text" inputmode="numeric" id="tx-amt" placeholder="0" value="${d.amount||''}" oninput="txPickHint()"></div>
     </div>`;
   /* ── 이체 ── */
   if(d.type==='transfer'){
@@ -2137,8 +2154,9 @@ function syncTxDraft(){
 // 거래 금액(t.amount)은 항상 원화. 계좌 통화에 맞춰 환산해 반영.
 function applyToAcc(a,krwAmt,sign,rate){ // rate: 거래 당시 환율(있으면 사용)
   if(!a)return;
-  const v=(a.cur==='USD')?Math.round(fromKRW(krwAmt,'USD',rate)*100)/100:krwAmt;
-  a.balance+=sign*v;
+  const amt=+krwAmt; if(!Number.isFinite(amt))return;      // 이상한 금액으로 잔액을 망가뜨리지 않는다
+  const v=(a.cur==='USD')?Math.round(fromKRW(amt,'USD',rate)*100)/100:amt;
+  a.balance=(Number.isFinite(+a.balance)?+a.balance:0)+sign*v;
   if(a.cur==='USD')a.balance=Math.round(a.balance*100)/100;
 }
 function applyBalance(t,sign){
@@ -2161,7 +2179,7 @@ function applyBalance(t,sign){
 }
 function saveTx(){
   syncTxDraft();
-  const d=txDraft, amt=Math.round(+d.amount);
+  const d=txDraft, amt=Math.round(numOf(d.amount));
   if(!d.date)return toast('날짜를 확인해주세요');
   if(!checkAmt(amt))return;
   if(d.type==='transfer'){
@@ -2426,10 +2444,10 @@ function openAccModal(id,presetType){
         </select></div>
     </div>
     <div class="field"><label>${isInv?'현재 평가금액':'잔액'}</label>
-      <input type="number" inputmode="decimal" step="any" id="ac-bal" value="${a?a.balance:''}" placeholder="0" oninput="acCurHint()">
+      <input type="text" inputmode="decimal" id="ac-bal" value="${a&&Number.isFinite(+a.balance)?+a.balance:''}" placeholder="0" oninput="acCurHint()">
       <div class="tiny" id="ac-cur-hint" style="margin-top:5px"></div></div>
     ${isSav?`<div class="grid2">
-      <div class="field"><label>월 납입액</label><input type="number" inputmode="numeric" id="ac-monthly" value="${a?a.monthly||'':''}" placeholder="${isHou?'100000':'0'}"></div>
+      <div class="field"><label>월 납입액</label><input type="text" inputmode="numeric" id="ac-monthly" value="${a?a.monthly||'':''}" placeholder="${isHou?'100000':'0'}"></div>
       ${isHou?`<div class="field"><label>가입일</label><input type="date" id="ac-join" value="${a?a.joinDate||'':''}" onchange="houEstimate()"></div>`
              :`<div class="field"><label>만기일</label><input type="date" id="ac-maturity" value="${a?a.maturity||'':''}"></div>`}
     </div>
@@ -2447,14 +2465,14 @@ function openAccModal(id,presetType){
     <details class="acc" style="margin-bottom:12px" ${a&&a.roundsBase?'open':''}><summary>청약 상세 설정 (선택)</summary>
       <div style="padding:0 16px 14px">
         <div class="grid2">
-          <div class="field"><label>이전 납입 회차</label><input type="number" inputmode="numeric" id="ac-rbase" value="${a?a.roundsBase||'':''}" placeholder="0">
+          <div class="field"><label>이전 납입 회차</label><input type="text" inputmode="numeric" id="ac-rbase" value="${a?a.roundsBase||'':''}" placeholder="0">
             <div class="tiny" style="margin-top:3px">앱에 기록하기 전까지의 회차</div></div>
-          <div class="field"><label>이전 인정 납입액</label><input type="number" inputmode="numeric" id="ac-recbase" value="${a?a.recogBase||'':''}" placeholder="0">
+          <div class="field"><label>이전 인정 납입액</label><input type="text" inputmode="numeric" id="ac-recbase" value="${a?a.recogBase||'':''}" placeholder="0">
             <div class="tiny" style="margin-top:3px">그때까지 인정된 금액</div></div>
         </div>
         <div class="grid2">
-          <div class="field" style="margin-bottom:0"><label>월 인정 한도</label><input type="number" inputmode="numeric" id="ac-recog" value="${a?a.recogCap||'':''}" placeholder="${HOUSING_DEF.recogCap}"></div>
-          <div class="field" style="margin-bottom:0"><label>연 소득공제 한도</label><input type="number" inputmode="numeric" id="ac-dcap" value="${a?a.deductCap||'':''}" placeholder="${HOUSING_DEF.deductCap}"></div>
+          <div class="field" style="margin-bottom:0"><label>월 인정 한도</label><input type="text" inputmode="numeric" id="ac-recog" value="${a?a.recogCap||'':''}" placeholder="${HOUSING_DEF.recogCap}"></div>
+          <div class="field" style="margin-bottom:0"><label>연 소득공제 한도</label><input type="text" inputmode="numeric" id="ac-dcap" value="${a?a.deductCap||'':''}" placeholder="${HOUSING_DEF.deductCap}"></div>
         </div>
         <div class="tiny" style="margin-top:8px">비워두면 기본값(월 ${fmtK(HOUSING_DEF.recogCap)}원 · 연 ${fmtK(HOUSING_DEF.deductCap)}원)을 써요. 제도가 바뀌거나 조건이 다르면 여기서 조정하세요.</div>
       </div></details>`:''}
@@ -2476,7 +2494,7 @@ function openAccModal(id,presetType){
         <div class="field"><label>절세 유형</label><select id="ac-taxkind">
           ${TAX_KINDS.map(([k,l])=>`<option value="${k}" ${(a&&a.taxKind)===k?'selected':''}>${l}</option>`).join('')}</select></div>
         <div class="field"><label>연 납입 한도 (원)</label>
-          <input type="number" inputmode="numeric" id="ac-yearcap" value="${a&&a.yearCap?a.yearCap:''}" placeholder="예: 20000000"></div>
+          <input type="text" inputmode="numeric" id="ac-yearcap" value="${a&&a.yearCap?a.yearCap:''}" placeholder="예: 20000000"></div>
       </div>
       ${a?`<div class="tiny" style="margin:-4px 0 12px">올해 납입 <b class="num">${fmtK(invYearPaid(a))}원</b>${a.yearCap?` / 한도 ${fmtK(a.yearCap)}원 (${Math.round(invYearPaid(a)/a.yearCap*100)}%)`:''}</div>`:''}
     </div>
@@ -2497,7 +2515,7 @@ function openAccModal(id,presetType){
           <div class="field"><label>기타 제비용 (%)</label>
             <input type="number" inputmode="decimal" step="any" id="ac-fetc" value="${a&&invFees(a).etc?invFees(a).etc:''}" placeholder="0.0036"></div>
           <div class="field"><label>최소 수수료 (${a&&a.cur==='USD'?'$':'원'})</label>
-            <input type="number" inputmode="decimal" step="any" id="ac-fmin" value="${a&&invFees(a).min?invFees(a).min:''}" placeholder="0 = 없음"></div>
+            <input type="text" inputmode="decimal" id="ac-fmin" value="${a&&invFees(a).min?invFees(a).min:''}" placeholder="0 = 없음"></div>
         </div>
         <div class="tiny" style="margin:-4px 0 10px">💡 매도할 때만 붙는 현지 제비용(미국 SEC 수수료 등)은 <b>매도 수수료율</b>에 합쳐서 넣어주세요.</div>
         <div class="grid2">
@@ -2570,7 +2588,8 @@ function saveAcc(id,type){
   const name=val('ac-name').trim();
   if(!name)return toast('이름을 입력해주세요');
   const cur=val('ac-cur','KRW');
-  const raw=numVal('ac-bal');
+  const raw=numValStrict('ac-bal');
+  if(!Number.isFinite(raw))return toast('잔액을 숫자로 입력해주세요 (예: 310000)');
   const data={name,cur,bank:val('ac-bank').trim(),balance:cur==='USD'?Math.round(raw*100)/100:Math.round(raw),
     monthly:$('ac-monthly')?Math.round(numVal('ac-monthly')):undefined,
     maturity:$('ac-maturity')?val('ac-maturity'):undefined,
@@ -2587,7 +2606,7 @@ function saveAcc(id,type){
     taxKind:$('ac-taxkind')?val('ac-taxkind'):undefined,
     yearCap:$('ac-yearcap')?(Math.round(numVal('ac-yearcap'))||0):undefined,
     fees:$('ac-fbuy')?{buy:+val('ac-fbuy')||0,sell:+val('ac-fsell')||0,etc:+val('ac-fetc')||0,
-      min:+val('ac-fmin')||0,from:val('ac-ffrom'),to:val('ac-fto')}:undefined,
+      min:numVal('ac-fmin'),from:val('ac-ffrom'),to:val('ac-fto')}:undefined,
     fxPref:$('ac-fxspread')?{spread:+val('ac-fxspread')||0,pref:+val('ac-fxpref')||0,
       from:val('ac-fxfrom'),to:val('ac-fxto')}:undefined};
   // 청약: 가입일이 있으면 가입 시 납입(1회차)이 최소한 반영되도록 보정
@@ -2870,7 +2889,7 @@ function openTradeCostModal(accId){
       <button onclick="tcSetSide('both')">왕복</button>
     </div></div>
     <div class="field"><label>거래 금액 (${esc(sym)})</label>
-      <input type="number" inputmode="decimal" step="any" id="tc-amt" placeholder="${isFx?'1000':'1000000'}" oninput="tcHint()"></div>
+      <input type="text" inputmode="decimal" id="tc-amt" placeholder="${isFx?'1000':'1000000'}" oninput="tcHint()"></div>
     <div class="card tight" style="margin-bottom:12px"><div class="tiny" id="tc-out">금액을 넣어보세요.</div></div>
     ${(!f.buy&&!f.sell&&!f.etc)?`<div class="tiny" style="color:var(--terra-deep);margin-bottom:12px">⚠️ 이 계좌에 수수료가 설정돼 있지 않아요. 계좌 수정에서 넣어주세요.</div>`:''}
     <button class="btn ghost block" onclick="openAccModal('${accId}')">수수료 설정 열기</button>`);
@@ -2884,7 +2903,7 @@ function tcSetSide(v){
 function tcHint(){
   const el=$('tc-out'); if(!el)return;
   const a=accById(tcAcc); if(!a)return;
-  const amt=+val('tc-amt')||0;
+  const amt=numVal('tc-amt');
   if(amt<=0){el.innerHTML='금액을 넣어보세요.';return}
   const isFx=!!(a.cur&&a.cur!=='KRW');
   const sym=(CURS[a.cur]||{}).sym||'₩';
@@ -2926,7 +2945,7 @@ function openInvLogModal(accId){
       <select id="il-from">${froms.length?froms.map(x=>`<option value="${x.id}">${ACC_META[x.type].emo} ${esc(x.name)} · ${fmtCur(x.balance,x.cur)}</option>`).join(''):'<option value="">입출금 계좌 없음</option>'}</select></div>
     <div class="grid2">
       <div class="field"><label>날짜</label><input type="date" id="il-date" value="${todayStr()}"></div>
-      <div class="field"><label>보낸 금액 (원)</label><input type="number" inputmode="numeric" id="il-krw" placeholder="0" oninput="ilHint()"></div>
+      <div class="field"><label>보낸 금액 (원)</label><input type="text" inputmode="numeric" id="il-krw" placeholder="0" oninput="ilHint()"></div>
     </div>
     ${isFx?`
     <div class="field"><label>환전 기준</label><div class="seg" id="il-seg">
@@ -2934,13 +2953,13 @@ function openInvLogModal(accId){
       <button onclick="ilSetMode('fx')">받은 ${esc(sym)} 직접 입력</button>
     </div></div>
     <div class="field" id="il-rate-w"><label>적용 환율 (1${esc(sym)} 당 원)</label>
-      <input type="number" inputmode="decimal" step="any" id="il-fx" value="${invFxRate(a).rate}" oninput="ilHint()">
+      <input type="text" inputmode="decimal" id="il-fx" value="${invFxRate(a).rate}" oninput="ilHint()">
       ${(()=>{const fx=invFxRate(a); if(!(fx.spread>0))return'';
         return`<div class="tiny" style="margin-top:5px">${fx.on
           ? `💱 환전 우대 <b>${fx.applied}%</b> 반영 — 기준 ${fx.base.toLocaleString()}원 · 스프레드 ${fx.spread}%`
           : `⏰ 환전 우대 기간이 아니라 <b>우대 없이</b> 계산했어요 (${fx.noPref.toLocaleString()}원)`}</div>`})()}</div>
     <div class="field" id="il-fx-w" style="display:none"><label>실제 받은 금액 (${esc(sym)})</label>
-      <input type="number" inputmode="decimal" step="any" id="il-fxamt" placeholder="0" oninput="ilHint()">
+      <input type="text" inputmode="decimal" id="il-fxamt" placeholder="0" oninput="ilHint()">
       <div class="tiny" style="margin-top:5px">증권사에 찍힌 금액을 그대로 넣으면 환전 수수료까지 반영된 환율이 계산돼요.</div></div>
     <div class="card tight" style="margin-bottom:12px"><div class="tiny" id="il-hint"></div></div>`
     :`<div class="tiny" id="il-hint" style="margin-bottom:12px"></div>`}
@@ -2966,10 +2985,10 @@ function ilCalc(accId){
   if(!isFx)return {isFx:false,krw,amount:krw,cur:'KRW',rate:1};
   let rate,amount;
   if(ilMode==='fx'){
-    amount=+val('il-fxamt')||0;
+    amount=numVal('il-fxamt');
     rate=amount>0?krw/amount:0;
   }else{
-    rate=+val('il-fx')||0;
+    rate=numVal('il-fx');
     amount=rate>0?krw/rate:0;
   }
   return {isFx:true,krw,cur:a.cur,rate,amount:Math.round(amount*100)/100};
@@ -3146,7 +3165,7 @@ function openFixedModal(id,presetKind){
     </div></div>
     <div class="field"><label>이름</label><input id="fx-name" placeholder="${isInc?'예: 월급, 정기 용돈, 과외비':'예: 유튜브 프리미엄, 통신비'}" value="${f?esc(f.name):''}"></div>
     <div class="grid2">
-      <div class="field"><label>금액 (원)</label><input type="number" inputmode="numeric" id="fx-amt" value="${f?f.amount:''}" placeholder="0"></div>
+      <div class="field"><label>금액 (원)</label><input type="text" inputmode="numeric" id="fx-amt" value="${f?f.amount:''}" placeholder="0"></div>
       <div class="field"><label>매월 ${isInc?'입금일':'결제일'}</label><input type="number" inputmode="numeric" id="fx-day" min="1" max="31" value="${f?f.day:1}" oninput="fxStartHint()">
         ${(f&&+f.day>28)?`<div class="tiny" style="margin-top:4px">2월처럼 짧은 달은 <b>그 달 마지막 날</b>에 기록돼요.</div>`:''}</div>
     </div>
@@ -3587,21 +3606,21 @@ function wizSync(){
   if(!wizDraft)return;
   if(wizStep===0){
     S.accounts.filter(a=>a.type==='checking').forEach(a=>{
-      const el=$('wz-acc-'+a.id); if(el&&el.value!=='')a.balance=Math.round(+el.value||0);
+      const el=$('wz-acc-'+a.id); if(el&&el.value!=='')a.balance=Math.round(numOf(el.value)||0);
     });
   }
   if(wizStep===1){
     wizDraft.cards.forEach(c=>{
       const p=$('wz-pend-'+c.id), f=$('wz-perf-'+c.id);
-      if(p)c.pending=Math.max(0,Math.round(+p.value||0));
-      if(f)c.perf=Math.max(0,Math.round(+f.value||0));
+      if(p)c.pending=Math.max(0,Math.round(numOf(p.value)||0));
+      if(f)c.perf=Math.max(0,Math.round(numOf(f.value)||0));
     });
   }
   if(wizStep===2){
     wizDraft.inst.forEach((x,i)=>{
       const g=k=>$(`wz-i${i}-${k}`);
       if(g('memo'))x.memo=g('memo').value;
-      if(g('amt'))x.amount=Math.max(0,Math.round(+g('amt').value||0));
+      if(g('amt'))x.amount=Math.max(0,Math.round(numOf(g('amt').value)||0));
       if(g('m'))x.months=Math.max(2,Math.min(36,+g('m').value||3));
       if(g('paid'))x.paid=Math.max(0,Math.min(x.months-1,+g('paid').value||0));
       if(g('card'))x.cardId=g('card').value;
@@ -3634,7 +3653,7 @@ function renderWizard(){
   if(wizStep===0){
     body=`<div class="tiny" style="margin-bottom:12px">은행 앱을 열어 <b>지금 잔액</b>을 그대로 적어주세요. 이 숫자가 '쓸 수 있는 돈'의 출발점이 됩니다.</div>
       ${chk.length?chk.map(a=>`<div class="field"><label>${esc(a.name)}</label>
-        <input type="number" inputmode="numeric" id="wz-acc-${a.id}" value="${a.balance||''}" placeholder="0"></div>`).join('')
+        <input type="text" inputmode="numeric" id="wz-acc-${a.id}" value="${a.balance||''}" placeholder="0"></div>`).join('')
         :`<div class="empty">입출금 계좌가 아직 없어요.<br>자산 탭에서 먼저 추가해주세요.</div>`}`;
   }else if(wizStep===1){
     body=`<div class="tiny" style="margin-bottom:12px">카드 앱 첫 화면에 있는 두 숫자예요. <b>결제 예정 금액</b>과 <b>지난달 이용금액</b>을 그대로 옮기면, 오늘 쓰는 것부터 혜택·결제 예정이 정확해집니다.</div>
@@ -3643,9 +3662,9 @@ function renderWizard(){
           <div style="font-weight:700;font-size:.9rem;margin-bottom:8px">${esc(c.name)}</div>
           <div class="grid2">
             <div class="field" style="margin-bottom:0"><label>남은 카드값</label>
-              <input type="number" inputmode="numeric" id="wz-pend-${c.id}" value="${c.pending||''}" placeholder="0"></div>
+              <input type="text" inputmode="numeric" id="wz-pend-${c.id}" value="${c.pending||''}" placeholder="0"></div>
             <div class="field" style="margin-bottom:0"><label>지난달 이용금액${c.hasTiers?'':' <span class="tiny">(무실적)</span>'}</label>
-              <input type="number" inputmode="numeric" id="wz-perf-${c.id}" value="${c.perf||''}" placeholder="0" ${c.hasTiers?'':'disabled'}></div>
+              <input type="text" inputmode="numeric" id="wz-perf-${c.id}" value="${c.perf||''}" placeholder="0" ${c.hasTiers?'':'disabled'}></div>
           </div>
           ${c.hasTiers?'':`<div class="tiny" style="margin-top:6px">실적 조건이 없는 카드라 지난달 금액은 필요 없어요.</div>`}
         </div>`).join('')
@@ -3660,7 +3679,7 @@ function renderWizard(){
             <button class="btn ghost sm" onclick="wizDelInst(${i})">✕</button></div>
           <div class="grid2">
             <div class="field" style="margin-bottom:8px"><label>총 금액</label>
-              <input type="number" inputmode="numeric" id="wz-i${i}-amt" value="${x.amount||''}" placeholder="1200000" oninput="wizSync();renderWizard()"></div>
+              <input type="text" inputmode="numeric" id="wz-i${i}-amt" value="${x.amount||''}" placeholder="1200000" oninput="wizSync();renderWizard()"></div>
             <div class="field" style="margin-bottom:8px"><label>카드</label>
               <select id="wz-i${i}-card">${d.cards.map(c=>`<option value="${c.id}" ${x.cardId===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></div>
           </div>
@@ -3919,14 +3938,14 @@ function syncCardDraft(){
   if(g('cd-payday'))cardDraft.payDay=Math.min(31,Math.max(1,+g('cd-payday').value||14));
   if(g('cd-tiers'))cardDraft.tiersText=g('cd-tiers').value;
   if(g('cd-benefits'))cardDraft.benefits=g('cd-benefits').value;
-  if(g('cd-fee'))cardDraft.annualFee=Math.round(+g('cd-fee').value||0);
+  if(g('cd-fee'))cardDraft.annualFee=Math.round(numVal('cd-fee'));
   if(g('cd-issued'))cardDraft.issued=g('cd-issued').value;
   if(g('cd-exempt'))cardDraft.exemptM=Math.max(0,Math.min(3,+g('cd-exempt').value||0));
   if(g('cd-noinst'))cardDraft.noInstPerk=g('cd-noinst').checked;
   if(g('cd-open-pend')||g('cd-open-perf')){
     const o=cardDraft.open=Object.assign({ym:'',pending:0,perf:0},cardDraft.open||{});
-    if(g('cd-open-pend'))o.pending=Math.max(0,Math.round(+g('cd-open-pend').value||0));
-    if(g('cd-open-perf'))o.perf=Math.max(0,Math.round(+g('cd-open-perf').value||0));
+    if(g('cd-open-pend'))o.pending=Math.max(0,Math.round(numVal('cd-open-pend')));
+    if(g('cd-open-perf'))o.perf=Math.max(0,Math.round(numVal('cd-open-perf')));
     // 어느 달을 '시작'으로 볼지는 처음 값을 넣을 때 고정한다
     if(!o.ym&&(o.pending>0||o.perf>0))o.ym=thisYM();
   }
@@ -3934,7 +3953,7 @@ function syncCardDraft(){
     const ap=cardDraft.autoPre=Object.assign(defAutoPre(),cardDraft.autoPre||{});
     ap.on=g('cd-ap-on').checked;
     if(g('cd-ap-wd'))ap.weekday=Math.max(0,Math.min(6,+g('cd-ap-wd').value||0));
-    if(g('cd-ap-min'))ap.min=Math.max(0,Math.round(+g('cd-ap-min').value||0));
+    if(g('cd-ap-min'))ap.min=Math.max(0,Math.round(numVal('cd-ap-min')));
     anchorAutoPre(ap);        // 켠 시점 이전 요일까지 소급 출금하지 않도록
   }
 }
@@ -3944,14 +3963,14 @@ function removePerk(i){syncCardDraft();cardDraft.perks.splice(i,1);renderCardMod
 function addPerk(){
   syncCardDraft();
   const g=i=>$(i);
-  const name=g('pk-name').value.trim(), val=+g('pk-val').value;
+  const name=g('pk-name').value.trim(), val=numVal('pk-val');
   if(!name||!val||val<=0)return toast('혜택 이름과 값을 입력해주세요');
   cardDraft.perks.push({id:uid(),name,cat:g('pk-cat').value,kind:g('pk-kind').value,value:val,
     merchants:(g('pk-merch')?g('pk-merch').value:'').trim(),
-    boost:+(g('pk-boost')?g('pk-boost').value:0)||0,
+    boost:numVal('pk-boost'),
     streakDays:Math.round(+(g('pk-streak')?g('pk-streak').value:0)||0),
     via:(g('pk-via')?g('pk-via').value:''),
-    minAmt:Math.round(+g('pk-min').value||0),capM:Math.round(+g('pk-cap').value||0),
+    minAmt:Math.round(numVal('pk-min')),capM:Math.round(numVal('pk-cap')),
     maxCnt:Math.round(+g('pk-cnt').value||0),tier:Math.max(0,Math.round(+g('pk-tier').value||0)),
     bill:$('pk-bill')?$('pk-bill').checked:false});
   renderCardModal();toast('혜택 추가됨 — 아래 [저장]을 눌러야 반영돼요');
@@ -4079,7 +4098,7 @@ function openCardPickModal(preset){
     <div class="tiny" style="margin:-4px 2px 12px">남은 월 한도·전월 실적·연속일까지 따져서 <b>실제로 더 받는 금액</b>을 계산해요.</div>
     <div class="grid2">
       <div class="field"><label>금액 (원)</label>
-        <input type="number" inputmode="numeric" id="cp-amt" value="${p.amount||''}" placeholder="10000" oninput="cpRun()"></div>
+        <input type="text" inputmode="numeric" id="cp-amt" value="${p.amount||''}" placeholder="10000" oninput="cpRun()"></div>
       <div class="field"><label>카테고리</label>
         <select id="cp-cat" onchange="cpRun()">${EXP_CATS.map(([e,n])=>`<option value="${n}" ${(p.cat||'식비')===n?'selected':''}>${e} ${n}</option>`).join('')}</select></div>
     </div>
@@ -4229,7 +4248,7 @@ function renderCardModal(){
         <div class="field" style="margin-bottom:0"><label>결제 요일</label>
           <select id="cd-ap-wd">${WEEKDAYS.map((w,i)=>`<option value="${i}" ${+ap.weekday===i?'selected':''}>${w}요일</option>`).join('')}</select></div>
         <div class="field" style="margin-bottom:0"><label>기준 금액 (원)</label>
-          <input type="number" inputmode="numeric" id="cd-ap-min" value="${ap.min||''}" placeholder="300000"></div>
+          <input type="text" inputmode="numeric" id="cd-ap-min" value="${ap.min||''}" placeholder="300000"></div>
       </div>
       <div class="tiny" style="margin-top:6px">
         ${c.id?`다음 예정 <b>${esc(mdLabel(nextPrepayDate(c)))}</b> (${WEEKDAYS[+ap.weekday||0]}요일)`:'저장하면 다음 지정 요일부터 동작해요'}
@@ -4252,10 +4271,10 @@ function renderCardModal(){
     <div class="sec-title" style="margin-top:6px">앱을 쓰기 전 상태 <span class="tiny">(옮겨오기)</span></div>
     <div class="grid2">
       <div class="field"><label>남은 카드값</label>
-        <input type="number" inputmode="numeric" id="cd-open-pend" value="${o.pending||''}" placeholder="0"
+        <input type="text" inputmode="numeric" id="cd-open-pend" value="${o.pending||''}" placeholder="0"
           oninput="syncCardDraft()"></div>
       <div class="field"><label>지난달 실적</label>
-        <input type="number" inputmode="numeric" id="cd-open-perf" value="${o.perf||''}" placeholder="0"
+        <input type="text" inputmode="numeric" id="cd-open-perf" value="${o.perf||''}" placeholder="0"
           oninput="syncCardDraft()"></div>
     </div>
     <div class="tiny" style="margin:-6px 0 12px">가계부는 0원에서 시작하지 않죠. <b>카드 앱 첫 화면</b>의 결제 예정 금액과 지난달 이용금액을 그대로 적으면 오늘부터 숫자가 맞습니다. ${o.pending>0||o.perf>0?`<br>지금 반영 중 — 남은 카드값 <b>${fmt(o.pending||0)}</b>${o.perf>0?` · 지난달 실적 <b>${fmt(o.perf)}</b>(${esc(prevYM(o.ym||thisYM()))} 기준)`:''}`:''}</div>`})()}`:''}
@@ -4282,8 +4301,8 @@ function renderCardModal(){
           <input id="pk-merch" placeholder="예: ChatGPT, Claude, Perplexity">
           <div class="tiny" style="margin-top:4px">💡 카드사 혜택은 '카테고리'가 아니라 <b>영역(가맹점 묶음)</b>인 경우가 많아요. 쉼표로 나눠 적으면 <b>메모에 그 이름이 들어간 내역</b>에만 적용돼요.</div></div>
         <div class="grid2"><div class="field"><label>방식</label><select id="pk-kind"><option value="percent">할인/적립 %</option><option value="fixed">건당 정액(원)</option></select></div>
-          <div class="field"><label>기본 값</label><input type="number" inputmode="decimal" step="any" id="pk-val" placeholder="10"></div></div>
-        <div class="grid2"><div class="field"><label>조건 충족 시 값 (선택)</label><input type="number" inputmode="decimal" step="any" id="pk-boost" placeholder="0 = 없음"></div>
+          <div class="field"><label>기본 값</label><input type="text" inputmode="decimal" id="pk-val" placeholder="10"></div></div>
+        <div class="grid2"><div class="field"><label>조건 충족 시 값 (선택)</label><input type="text" inputmode="decimal" id="pk-boost" placeholder="0 = 없음"></div>
           <div class="field"><label>연속 며칠 써야 하나</label><input type="number" inputmode="numeric" id="pk-streak" placeholder="0 = 조건 없음"></div></div>
         <div class="tiny" style="margin:-6px 0 10px">💡 '3일 연속 쓰면 2배' 같은 조건이에요. 기본 0.5 / 조건 충족 1.0 / 연속 3 처럼 넣으면 <b>연속 3일째 되는 날부터</b> 2배로 계산해요.</div>
         <div class="field"><label>결제 방법 조건</label><select id="pk-via">
@@ -4291,8 +4310,8 @@ function renderCardModal(){
           <option value="simple">온라인 간편결제 건만</option>
           <option value="normal">간편결제가 아닌 건만</option></select>
           <div class="tiny" style="margin-top:4px">💡 '기본 적립'과 '간편결제 적립'이 따로 있는 카드라면, 기본 쪽을 <b>간편결제가 아닌 건만</b>으로 두어야 같은 결제에 두 번 얹히지 않아요.</div></div>
-        <div class="grid2"><div class="field"><label>건당 최소금액 (선택)</label><input type="number" inputmode="numeric" id="pk-min" placeholder="10000"></div>
-          <div class="field"><label>월 혜택 한도 (선택)</label><input type="number" inputmode="numeric" id="pk-cap" placeholder="5000"></div></div>
+        <div class="grid2"><div class="field"><label>건당 최소금액 (선택)</label><input type="text" inputmode="numeric" id="pk-min" placeholder="10000"></div>
+          <div class="field"><label>월 혜택 한도 (선택)</label><input type="text" inputmode="numeric" id="pk-cap" placeholder="5000"></div></div>
         <div class="grid2"><div class="field"><label>월 횟수 제한 (선택)</label><input type="number" inputmode="numeric" id="pk-cnt" placeholder="0 = 무제한"></div>
           <div class="field"><label>전월 실적 조건</label><select id="pk-tier">
             <option value="0">이 혜택은 실적 조건 없음</option>
@@ -4306,7 +4325,7 @@ function renderCardModal(){
       </div>
       <button class="btn ghost sm block" style="margin-top:8px" onclick="openPerkPreset()">📦 카드사 혜택 묶음 불러오기</button></div>
     <div class="field"><label>연회비 (원, 선택)</label>
-      <input type="number" inputmode="numeric" id="cd-fee" value="${c.annualFee||''}" placeholder="0 = 없음">
+      <input type="text" inputmode="numeric" id="cd-fee" value="${c.annualFee||''}" placeholder="0 = 없음">
       <div class="tiny" style="margin-top:4px">💡 입력하면 피킹률에서 연회비 손익분기를 계산해드려요.</div></div>
     <div class="field"><label>참고 메모</label><textarea id="cd-benefits" placeholder="연회비 1만원, 온라인 발급 혜택 등">${esc(c.benefits||'')}</textarea></div>
     <div style="display:flex;gap:8px">
@@ -5271,14 +5290,14 @@ function openGoalModal(id){
   openModal(`${sheetHead(g?'목표 관리':'저축 목표 추가')}
     <div class="field"><label>목표 이름</label><input id="gl-name" placeholder="예: 유럽 여행자금" value="${g?esc(g.name):''}"></div>
     <div class="grid2">
-      <div class="field"><label>목표 금액 (원)</label><input type="number" inputmode="numeric" id="gl-target" value="${g?g.target:''}" placeholder="2000000"></div>
+      <div class="field"><label>목표 금액 (원)</label><input type="text" inputmode="numeric" id="gl-target" value="${g?g.target:''}" placeholder="2000000"></div>
       <div class="field"><label>목표일 (선택)</label><input type="date" id="gl-due" value="${g?g.due||'':''}"></div>
     </div>
     <div class="field"><label>진행률 계산 방식</label>
       <select id="gl-acc"><option value="">직접 기록 (＋ 입금 버튼으로 누적)</option>
       ${accOpts(g&&g.accountId,null,a=>'잔액 연동')}</select>
       <div class="tiny" style="margin-top:5px">💡 적금 계좌를 연동하면 잔액이 곧 진행률이 돼요.</div></div>
-    ${g&&!g.accountId?`<div class="field"><label>현재 모은 금액 (원)</label><input type="number" inputmode="numeric" id="gl-saved" value="${g.saved||0}"></div>`:''}
+    ${g&&!g.accountId?`<div class="field"><label>현재 모은 금액 (원)</label><input type="text" inputmode="numeric" id="gl-saved" value="${g.saved||0}"></div>`:''}
     <div style="display:flex;gap:8px">
       ${g?`<button class="btn ghost" style="flex:1" onclick="delGoal('${g.id}')">삭제</button>`:''}
       <button class="btn primary" style="flex:2" onclick="saveGoal('${g?g.id:''}')">저장</button>
@@ -5488,7 +5507,7 @@ function openDebtModal(id){
     </div></div>
     <div class="field"><label>상대</label><input id="db-person" placeholder="예: 김민준" value="${d?esc(d.person):''}"></div>
     <div class="grid2">
-      <div class="field"><label>금액 (원)</label><input type="number" inputmode="numeric" id="db-amt" value="${d?d.amount:''}" placeholder="0"></div>
+      <div class="field"><label>금액 (원)</label><input type="text" inputmode="numeric" id="db-amt" value="${d?d.amount:''}" placeholder="0"></div>
       <div class="field"><label>날짜</label><input type="date" id="db-date" value="${d?d.date:todayStr()}"></div>
     </div>
     <div class="grid2">
@@ -5615,7 +5634,7 @@ function renderBudgetModal(){
   const cats=Object.entries(bdDraft.cats||{});
   openModal(`${sheetHead(ymLabel(ym)+' 예산')}
     <div class="field"><label>총 지출 예산 (원)</label>
-      <input type="number" inputmode="numeric" id="bd-total" value="${bdDraft.total||''}" placeholder="1000000">
+      <input type="text" inputmode="numeric" id="bd-total" value="${bdDraft.total||''}" placeholder="1000000">
       ${pv.exp>0?`<div class="tiny" style="margin-top:5px">💡 지난달 지출은 ${fmt(pv.exp)}이었어요.
         <span style="color:var(--terra);cursor:pointer;font-weight:700" onclick="$('bd-total').value=${Math.round(pv.exp*0.9)}">−10%로 설정</span></div>`:''}</div>
     <div class="field"><label>카테고리별 예산 (선택)</label>
@@ -5624,7 +5643,7 @@ function renderBudgetModal(){
         <span><b class="num" style="font-size:.85rem">${fmt(v)}</b> <button class="btn ghost sm" style="margin-left:6px" onclick="rmBdCat('${c}')">✕</button></span></div>`).join(''):'<div class="tiny" style="margin-bottom:6px">카테고리별로도 나눠서 관리할 수 있어요.</div>'}
       <div class="grid2">
         <div class="field" style="margin-bottom:0"><select id="bd-cat">${EXP_CATS.map(([e,n])=>`<option>${n}</option>`).join('')}</select></div>
-        <div class="field" style="margin-bottom:0"><input type="number" inputmode="numeric" id="bd-cval" placeholder="금액"></div>
+        <div class="field" style="margin-bottom:0"><input type="text" inputmode="numeric" id="bd-cval" placeholder="금액"></div>
       </div>
       <button class="btn soft sm block" style="margin-top:7px" onclick="addBdCat()">＋ 카테고리 예산 추가</button></div>
     <div class="field"><label style="display:flex;gap:8px;align-items:center;cursor:pointer">
@@ -5638,10 +5657,10 @@ function renderBudgetModal(){
       <button class="btn primary" style="flex:2" onclick="saveBudget()">저장</button>
     </div>`);
 }
-function syncBd(){const t=$('bd-total');if(t)bdDraft.total=Math.round(+t.value||0);const r=$('bd-roll');if(r)bdDraft.rollover=r.checked}
+function syncBd(){const t=$('bd-total');if(t)bdDraft.total=Math.round(numVal('bd-total'));const r=$('bd-roll');if(r)bdDraft.rollover=r.checked}
 function addBdCat(){
   syncBd();
-  const c=$('bd-cat').value, v=Math.round(+$('bd-cval').value||0);
+  const c=$('bd-cat').value, v=Math.round(numVal('bd-cval'));
   if(!v||v<=0)return toast('금액을 입력해주세요');
   bdDraft.cats=bdDraft.cats||{}; bdDraft.cats[c]=v; renderBudgetModal();
 }
@@ -5795,7 +5814,7 @@ function openWishModal(){
   openModal(`${sheetHead('위시리스트에 담기')}
     <div class="field"><label>사고 싶은 것</label><input id="wi-name" placeholder="예: 무선 이어폰"></div>
     <div class="grid2">
-      <div class="field"><label>예상 금액 (원)</label><input type="number" inputmode="numeric" id="wi-amt" placeholder="0"></div>
+      <div class="field"><label>예상 금액 (원)</label><input type="text" inputmode="numeric" id="wi-amt" placeholder="0"></div>
       <div class="field"><label>쿨다운</label><select id="wi-cool">
         <option value="7">7일</option><option value="14" selected>14일</option><option value="30">30일</option></select></div>
     </div>
@@ -5804,7 +5823,7 @@ function openWishModal(){
 }
 function saveWish(){
   const n=$('wi-name').value.trim();
-  const a=Math.round(+$('wi-amt').value||0);
+  const a=Math.round(numVal('wi-amt'));
   const c=+$('wi-cool').value||COOL_DAYS;
   if(!n||!a||a<=0)return toast('이름과 금액을 확인해주세요');
   S.wish.push({id:uid(),name:n,amount:a,date:todayStr(),cool:c,status:'open',decidedAt:''});
@@ -5853,15 +5872,17 @@ function openReconModal(){
     <div class="tiny" style="margin-bottom:12px">각 계좌의 <b>실제 잔액</b>을 입력하면 앱 기록과 비교해 차액을 알려드려요.</div>
     ${accs.map(a=>`<div class="field">
       <label>${ACC_META[a.type].emo} ${esc(a.name)} <span style="color:var(--faint);font-weight:600">— 앱 기록 ${fmtCur(a.balance,a.cur)}</span></label>
-      <input type="number" inputmode="decimal" step="any" id="rc-${a.id}" placeholder="${a.cur==='USD'?'실제 $ 잔액':'실제 잔액 (원)'}" value="${a.balance}">
+      <input type="text" inputmode="decimal" id="rc-${a.id}" placeholder="${a.cur==='USD'?'실제 $ 잔액':'실제 잔액 (원)'}" value="${a.balance}">
     </div>`).join('')}
     <button class="btn primary block" onclick="doRecon()">차액 확인</button>`);
 }
 function doRecon(){
   const accs=S.accounts.filter(a=>a.type==='checking'||a.type==='deposit'||a.type==='invest');
   const items=accs.map(a=>{
-    const raw=+$('rc-'+a.id).value;
-    const actual=a.cur==='USD'?Math.round(raw*100)/100:Math.round(raw);
+    const raw=numOf(($('rc-'+a.id)||{}).value);
+    // 숫자로 못 읽으면 '안 건드림'으로 본다 — 조용히 0 으로 맞춰버리면 실제 잔액을 잃는다
+    const actual=!Number.isFinite(raw)?a.balance
+      :(a.cur==='USD'?Math.round(raw*100)/100:Math.round(raw));
     return{accountId:a.id,cur:a.cur,recorded:a.balance,actual,diff:Math.round((actual-a.balance)*100)/100};
   });
   const gaps=items.filter(i=>Math.abs(i.diff)>0.009);
@@ -5950,7 +5971,7 @@ function openFxModal(){
           :`<div class="tiny" style="margin-top:6px;color:var(--faint)">매일 갱신될 때마다 쌓여요. 8일치가 모이면 판단을 시작해요.</div>`}
       </div>`})()}
     <div class="field"><label>직접 입력 (1$ 당 원)</label>
-      <input type="number" inputmode="decimal" step="any" id="fx-manual" value="${f.usdkrw}">
+      <input type="text" inputmode="decimal" id="fx-manual" value="${f.usdkrw}">
       <div class="tiny" style="margin-top:5px">네이버에 '환율' 검색하면 현재 시세를 볼 수 있어요.</div></div>
     <button class="btn primary block" style="margin-bottom:10px" onclick="saveFxManual()">이 환율로 저장</button>
     <button class="btn ghost block" style="margin-bottom:12px" onclick="fetchFx()">🔄 자동 갱신 다시 시도</button>
