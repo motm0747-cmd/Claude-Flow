@@ -100,12 +100,12 @@ r = await p.evaluate(() => {
   S.accounts=[{id:'d1',type:'deposit',name:'예금',balance:5000000,cur:'KRW'}];
   _discInvalidate(); save(); renderHome();
   return {label:$('h-lead-label').textContent, lead:$('h-lead').textContent,
-          sub:$('h-lead-sub').innerHTML, c1:$('h-c1-k').textContent, btn:$('h-lead-btn').style.display};
+          sub:$('h-lead-sub').innerHTML, c1:$('h-c1-k').textContent, btn:$('h-lead-btns').style.display};
 });
 ok('계좌 없으면 순자산으로 대체', r.label==='순자산' && r.lead==='5,000,000원', `${r.label} / ${r.lead}`);
 ok('  이유를 알려줌', /입출금 계좌를 등록하면/.test(r.sub));
 ok('  보조 칸은 수지로 전환', r.c1==='이번 달 수지', r.c1);
-ok('  계산 근거 버튼 숨김', r.btn==='none');
+ok('  계산 근거·구매 검토 버튼 모두 숨김', r.btn==='none');
 
 // 해야 할 일 개수 배지
 r = await p.evaluate(() => {

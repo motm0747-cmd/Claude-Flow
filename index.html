@@ -685,7 +685,10 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
         <div class="cell"><div class="k">이번 달 수입</div><div class="v num pos" id="h-inc">0</div></div>
         <div class="cell"><div class="k">이번 달 지출</div><div class="v num neg" id="h-exp">0</div></div>
       </div>
-      <button class="btn ghost sm block" style="margin-top:11px" id="h-lead-btn" onclick="openSafeModal()">계산 근거 보기</button>
+      <div class="row" style="gap:8px;margin-top:11px" id="h-lead-btns">
+        <button class="btn ghost sm" style="flex:1" id="h-lead-btn" onclick="openSafeModal()">계산 근거</button>
+        <button class="btn ghost sm" style="flex:1" id="h-buy-btn" onclick="openBuyModal()">이거 사도 될까?</button>
+      </div>
     </div>
 
     <!-- ② 지금 해야 할 일 — 급한 알림이라 넓은 화면에서도 늘 전체 폭 -->
@@ -867,7 +870,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20260915-sync';
+const APP_BUILD='20260916-dates';
 const KEY='claudeflow_v1';
 const store={
   ok:(()=>{try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true}catch(e){return false}})(),
@@ -1075,6 +1078,13 @@ const thisYM=()=>todayStr().slice(0,7);
 const prevYM=ym=>{const[y,m]=ym.split('-').map(Number);const d=new Date(y,m-2,1);return`${d.getFullYear()}-${pad(d.getMonth()+1)}`};
 const ymLabel=ym=>{const[y,m]=ym.split('-');return`${y}년 ${+m}월`};
 const daysIn=ym=>{const[y,m]=ym.split('-').map(Number);return new Date(y,m,0).getDate()};
+/* ── 말일 결제일 ──────────────────────────────────────────────────────
+ * 월세·관리비는 '말일' 출금이 흔한데, 29·30·31일로 잡아두면 2월 같은 짧은 달에
+ * 그 달만 통째로 건너뛰었다(28 >= 31 이 거짓이라 자동 기록이 안 됨). 기록될 때도
+ * `2026-02-31` 같은 존재하지 않는 날짜가 만들어질 수 있었다.
+ * 그 달의 마지막 날로 당겨서 쓴다 — 카드사·은행도 같은 방식이다. */
+const domIn=(day,ym)=>Math.min(Math.max(1,Math.round(+day)||1),daysIn(ym||thisYM()));
+const domDate=(day,ym)=>`${ym}-${pad(domIn(day,ym))}`;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const accById=id=>S.accounts.find(a=>a.id===id);
 const cardById=id=>S.cards.find(c=>c.id===id);
@@ -1507,7 +1517,7 @@ function safeSpend(){
     const d=addDays(today,i), ym=d.slice(0,7), dom=+d.slice(8,10);
     const isHz=(d===hz.date);
     fxAll.forEach(f=>{
-      if(+f.day!==dom||!fixedActiveOn(f,ym))return;
+      if(domIn(f.day,ym)!==dom||!fixedOnDate(f,d))return;
       if((f.kind||'expense')==='income'){
         // 지평 당일 들어오는 돈은 '다음 기간'의 돈이라 여기 넣지 않는다
         if(isHz)return;
@@ -1516,10 +1526,10 @@ function safeSpend(){
         minus+=+f.amount||0; items.push({d,n:f.name||'고정비',v:+f.amount||0,t:'fixed'});
       }
     });
-    forced.forEach(a=>{ if(+a.payDay===dom){
+    forced.forEach(a=>{ if(domIn(a.payDay,ym)===dom){
       minus+=+a.monthly||0; items.push({d,n:a.name||'적금',v:+a.monthly||0,t:'save'}); } });
     S.cards.filter(c=>c.type==='credit'&&+c.payDay>0).forEach(c=>{
-      if(+c.payDay!==dom)return;
+      if(domIn(c.payDay,ym)!==dom)return;
       seen[c.id]=(seen[c.id]||0)+1;
       // 첫 결제일은 실제 미결제액, 그 뒤는 이번 달 사용 페이스로 추정
       const amt=seen[c.id]===1?Math.round(creditPendingNet(c)):Math.round(cardMonthSpend(c.id,thisYM()));
@@ -1535,6 +1545,74 @@ function safeSpend(){
     budgetLeft:bp?Math.round(bp.total-bp.spent):null};
 }
 const mdLabel=d=>d.slice(5).replace('-','/');
+/* ── 이거 사도 될까? ─────────────────────────────────────────────────
+ * 큰 지출을 앞두고 사람이 정말 알고 싶은 건 '순자산이 어떻게 되나'가 아니라
+ * "사고 나면 다음 급여까지 얼마 남지?" 다. 그래서 순자산 시뮬레이터가 아니라
+ * 홈의 대표 숫자인 '쓸 수 있는 돈' 위에서 계산한다.
+ * 거래를 만들지 않는다 — 계좌 잔액도 내역도 건드리지 않는 비교일 뿐이다. */
+function buyCheck(amount,months){
+  const s=safeSpend();
+  const amt=Math.round(+amount||0);
+  if(!(amt>0))return{valid:false};
+  if(!s.ok)return{valid:true,ok:false};
+  const m=Math.max(1,Math.min(12,Math.round(+months)||1));
+  const first=Math.floor(amt/m);                 // 할부면 이번 기간엔 1회차만 나간다
+  const after=s.usable-first;
+  return{valid:true,ok:true,amt,m,first,before:s.usable,after,days:s.days,hz:s.hz,
+    perDay:Math.floor(Math.max(0,after)/s.days),
+    budgetAfter:s.budgetLeft===null?null:s.budgetLeft-first};
+}
+let buyDraft={amount:'',months:1};
+function openBuyModal(){
+  buyDraft={amount:'',months:1};
+  openModal(`${sheetHead('이거 사도 될까?')}
+    <div class="tiny" style="margin:-4px 2px 14px">사고 나면 <b>다음 수입까지 얼마가 남는지</b> 미리 봅니다. 기록은 만들지 않아요 — 잔액도 내역도 그대로예요.</div>
+    <div class="field"><label>무엇을 살까요 (선택)</label>
+      <input id="buy-name" placeholder="예: 노트북" maxlength="40"></div>
+    <div class="grid2">
+      <div class="field"><label>금액</label>
+        <input type="number" inputmode="numeric" id="buy-amt" placeholder="1500000" oninput="renderBuyResult()"></div>
+      <div class="field"><label>할부</label>
+        <select id="buy-months" onchange="renderBuyResult()">
+          ${[1,2,3,6,12].map(n=>`<option value="${n}">${n===1?'일시불':n+'개월'}</option>`).join('')}</select></div>
+    </div>
+    <div id="buy-result"></div>`);
+  setTimeout(()=>{const el=$('buy-amt'); if(el)el.focus();},60);
+}
+function renderBuyResult(){
+  const box=$('buy-result'); if(!box)return;
+  const r=buyCheck(($('buy-amt')||{}).value,($('buy-months')||{}).value);
+  if(!r.valid){box.innerHTML=`<div class="empty">금액을 넣으면 사기 전후를 비교해드려요</div>`;return}
+  if(!r.ok){box.innerHTML=`<div class="empty">입출금 계좌를 먼저 등록하면 비교할 수 있어요</div>`;return}
+  const bad=r.after<0;
+  const inst=r.m>1?`<div class="tiny" style="margin-top:6px">${r.m}개월 할부라 이번 기간엔 <b>${fmt(r.first)}</b>만 나가요. 나머지 ${fmt(r.amt-r.first)}는 다음 달부터.</div>`:'';
+  box.innerHTML=`
+    <div class="card tight" style="margin-top:4px">
+      <div class="row" style="padding:3px 0"><span class="tiny">지금 쓸 수 있는 돈</span><b class="num">${fmt(r.before)}</b></div>
+      <div class="row" style="padding:3px 0"><span class="tiny">${r.m>1?'이번 회차':'이 소비'}</span><b class="num neg">−${fmt(r.first)}</b></div>
+      <div class="divider"></div>
+      <div class="row"><b style="font-size:.9rem">사고 나면</b>
+        <b class="num" style="font-size:1.15rem;color:${bad?'var(--terra-deep)':'var(--green)'}">${fmt(r.after)}</b></div>
+      <div class="tiny" style="margin-top:5px">${bad
+        ? `⚠️ ${esc(r.hz.name)}까지 <b>${fmt(-r.after)}</b> 모자라요. 미루거나 할부를 늘리는 게 나아요.`
+        : `${esc(r.hz.name)}까지 ${r.days}일 · 하루 <b>${fmt(r.perDay)}</b>꼴로 남아요.`}</div>
+      ${inst}
+      ${r.budgetAfter!==null?`<div class="tiny" style="margin-top:4px">이번 달 예산 기준으로는 ${fmt(r.budgetAfter)} 남아요 <span style="color:var(--faint)">(예산은 달 단위, 위 숫자는 수입일까지라 기간이 달라요)</span></div>`:''}
+    </div>
+    <div class="tiny" style="margin-top:8px">아직 기록하지 않은 지출이 있으면 실제로는 더 빠듯할 수 있어요.</div>
+    <button class="btn primary block" style="margin-top:12px" onclick="buyToTx()">이걸로 기록하기</button>`;
+}
+/* 마음을 정했으면 바로 입력창으로 넘긴다 — 금액을 다시 치게 하지 않는다 */
+function buyToTx(){
+  const amt=Math.round(+($('buy-amt')||{}).value||0);
+  if(!(amt>0))return toast('금액을 넣어주세요');
+  const name=(($('buy-name')||{}).value||'').trim();
+  const m=Math.max(1,Math.min(12,+($('buy-months')||{}).value||1));
+  closeModal();
+  openTxModal();
+  txDraft.amount=amt; txDraft.memo=name; txDraft.months=m; txDraft.paidPortions=0;
+  renderTxModal();
+}
 function openSafeModal(){
   const s=safeSpend();
   // 입출금 계좌가 있어야 계산이 된다 — 이유를 말해주고 바로 만들 수 있게
@@ -1623,7 +1701,7 @@ function renderHome(){
  *    입출금 계좌가 없어 계산이 안 되면 순자산으로 물러선다(없는 값을 지어내지 않는다). */
 function renderHero(ym,inc,exp,bal){
   const s=safeSpend();
-  const lead=$('h-lead'), label=$('h-lead-label'), sub=$('h-lead-sub'), btn=$('h-lead-btn');
+  const lead=$('h-lead'), label=$('h-lead-label'), sub=$('h-lead-sub'), btn=$('h-lead-btns');
   const c1k=$('h-c1-k'), c1v=$('h-c1-v');
   if(s.ok){
     label.textContent = s.hz.kind==='income' ? `${s.hz.name}까지 쓸 수 있는 돈` : '이달 말까지 쓸 수 있는 돈';
@@ -3069,7 +3147,8 @@ function openFixedModal(id,presetKind){
     <div class="field"><label>이름</label><input id="fx-name" placeholder="${isInc?'예: 월급, 정기 용돈, 과외비':'예: 유튜브 프리미엄, 통신비'}" value="${f?esc(f.name):''}"></div>
     <div class="grid2">
       <div class="field"><label>금액 (원)</label><input type="number" inputmode="numeric" id="fx-amt" value="${f?f.amount:''}" placeholder="0"></div>
-      <div class="field"><label>매월 ${isInc?'입금일':'결제일'}</label><input type="number" inputmode="numeric" id="fx-day" min="1" max="28" value="${f?f.day:1}" oninput="fxStartHint()"></div>
+      <div class="field"><label>매월 ${isInc?'입금일':'결제일'}</label><input type="number" inputmode="numeric" id="fx-day" min="1" max="31" value="${f?f.day:1}" oninput="fxStartHint()">
+        ${(f&&+f.day>28)?`<div class="tiny" style="margin-top:4px">2월처럼 짧은 달은 <b>그 달 마지막 날</b>에 기록돼요.</div>`:''}</div>
     </div>
     ${f?'':`<div class="tiny" id="fx-start-hint" style="margin:-6px 0 12px"></div>`}
     <div class="grid2">
@@ -3107,7 +3186,7 @@ function fxSeg(btn,id){
   if($('fx-to'))$('fx-to').value=cur.to;
 }
 function saveFixed(id){
-  const name=val('fx-name').trim(), amt=Math.round(numVal('fx-amt')), day=Math.min(28,Math.max(1,numVal('fx-day')||1));
+  const name=val('fx-name').trim(), amt=Math.round(numVal('fx-amt')), day=Math.min(31,Math.max(1,numVal('fx-day')||1));
   if(!name)return toast('이름을 입력해주세요');
   if(!checkAmt(amt))return;
   const from=val('fx-from'), to=val('fx-to');
@@ -3128,7 +3207,7 @@ function saveFixed(id){
 // 새 고정 항목 등록 시 '언제부터 기록되는지' 안내
 function fxStartHint(){
   const el=$('fx-start-hint'); if(!el)return;
-  const day=Math.min(28,Math.max(1,numVal('fx-day')||1));
+  const day=Math.min(31,Math.max(1,numVal('fx-day')||1));
   const today=todayStr(), thisDue=`${thisYM()}-${pad(day)}`;
   if(thisDue<today){
     const nm=nextYM(thisYM());
@@ -3150,13 +3229,21 @@ function fixedActiveOn(f,ym){
   if(f.to&&f.to<mStart)return false;     // 종료가 이 달보다 앞
   return true;
 }
+/* 그 날짜에 이 고정 항목이 살아 있는가 — 앞날을 그릴 때는 달이 아니라 날짜로 봐야 한다.
+   (fixedActiveOn 은 '이 달에 한 번이라도 걸치는가'라 이미 끝난 항목도 통과시킨다) */
+function fixedOnDate(f,date){
+  if(!f||f.active===false)return false;
+  if(f.from&&date<f.from)return false;
+  if(f.to&&date>f.to)return false;
+  return true;
+}
 /* 자동 기록용: 실제 그 날짜에 기록해도 되는지 (기간을 하루 단위로 엄격 판정) */
 function fixedDueOn(f,ym,day){
   if(!fixedActiveOn(f,ym))return false;
-  const d=`${ym}-${pad(f.day||1)}`;
+  const dd=domIn(f.day,ym), d=`${ym}-${pad(dd)}`;   // 짧은 달은 말일로 당긴다
   if(f.from&&d<f.from)return false;
   if(f.to&&d>f.to)return false;
-  return day>=f.day;
+  return day>=dd;
 }
 const fixedOf=kind=>S.fixed.filter(f=>(f.kind||'expense')===kind);
 function fixedMonthly(kind,ym){
@@ -3180,7 +3267,7 @@ function autoApplyFixed(){ // 결제일 지난 고정 항목 자동 기록 (지�
     if(!fixedDueOn(f,ym,day))return;
     if(S.tx.some(t=>t.fixedId===f.id&&ymOf(t.date)===ym))return;
     const isInc=(f.kind||'expense')==='income';
-    const t={id:uid(),type:isInc?'income':'expense',date:`${ym}-${pad(f.day)}`,amount:f.amount,
+    const t={id:uid(),type:isInc?'income':'expense',date:domDate(f.day,ym),amount:f.amount,
       cat:f.cat,memo:f.name,payKind:f.payKind,payId:f.payId,fixedId:f.id,defended:!isInc,fxAt:fxRate()};
     if(!isInc){t.months=1;t.paidPortions=0}
     S.tx.push(t);applyBalance(t,1);
@@ -3284,14 +3371,15 @@ function autoApplySaving(){
   const ym=thisYM(), day=new Date().getDate();
   let n=0, skipped=[];
   S.accounts.filter(a=>(a.type==='saving'||a.type==='housing')&&a.payDay>0&&a.monthly>0&&a.payFrom).forEach(a=>{
-    if(a.payDay>day)return;                                        // 아직 납입일 전
-    if(a.payFrom_start&&`${ym}-${pad(a.payDay)}`<a.payFrom_start)return; // 설정 전의 지난 납입일은 건너뜀
-    if(a.maturity&&a.maturity<`${ym}-${pad(a.payDay)}`)return;      // 만기 지남
+    const pd=domIn(a.payDay,ym), pdDate=`${ym}-${pad(pd)}`;        // 짧은 달은 말일로 당긴다
+    if(pd>day)return;                                              // 아직 납입일 전
+    if(a.payFrom_start&&pdDate<a.payFrom_start)return;             // 설정 전의 지난 납입일은 건너뜀
+    if(a.maturity&&a.maturity<pdDate)return;                       // 만기 지남
     if(S.tx.some(t=>t.savingId===a.id&&ymOf(t.date)===ym))return;   // 이번 달 이미 납입
     const from=accById(a.payFrom);
     if(!from){skipped.push(`${a.name}(출금계좌 없음)`);return}       // 계좌가 삭제된 경우
     if(accKRW(from)<a.monthly){skipped.push(`${a.name}(잔액 부족)`);return}
-    const t={id:uid(),type:'transfer',date:`${ym}-${pad(a.payDay)}`,amount:a.monthly,
+    const t={id:uid(),type:'transfer',date:pdDate,amount:a.monthly,
       fromId:from.id,toId:a.id,memo:`${a.name} 자동납입`,savingId:a.id,fxAt:fxRate()};
     S.tx.push(t);applyBalance(t,1);n++;
   });
@@ -3828,7 +3916,7 @@ function syncCardDraft(){
   const g=i=>$(i);
   if(g('cd-name'))cardDraft.name=g('cd-name').value;
   if(g('cd-acc'))cardDraft.accountId=g('cd-acc').value;
-  if(g('cd-payday'))cardDraft.payDay=Math.min(28,Math.max(1,+g('cd-payday').value||14));
+  if(g('cd-payday'))cardDraft.payDay=Math.min(31,Math.max(1,+g('cd-payday').value||14));
   if(g('cd-tiers'))cardDraft.tiersText=g('cd-tiers').value;
   if(g('cd-benefits'))cardDraft.benefits=g('cd-benefits').value;
   if(g('cd-fee'))cardDraft.annualFee=Math.round(+g('cd-fee').value||0);
@@ -4130,7 +4218,8 @@ function renderCardModal(){
     <div class="grid2">
       <div class="field"><label>${c.type==='credit'?'결제 계좌':'출금 계좌'}</label><select id="cd-acc"><option value="">선택 안 함</option>
         ${S.accounts.filter(a=>a.type==='checking').map(a=>`<option value="${a.id}" ${c.accountId===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}</select></div>
-      ${c.type==='credit'?`<div class="field"><label>결제일 (매월)</label><input type="number" inputmode="numeric" id="cd-payday" min="1" max="28" value="${c.payDay||14}"></div>`:'<div></div>'}
+      ${c.type==='credit'?`<div class="field"><label>결제일 (매월)</label><input type="number" inputmode="numeric" id="cd-payday" min="1" max="31" value="${c.payDay||14}">
+        ${(+c.payDay>28)?`<div class="tiny" style="margin-top:4px">짧은 달은 그 달 마지막 날 기준</div>`:''}</div>`:'<div></div>'}
     </div>
     ${c.type==='credit'?(()=>{const ap=c.autoPre||defAutoPre();return`
     <div class="field"><label class="cb-row"><input type="checkbox" id="cd-ap-on" ${ap.on?'checked':''}
@@ -4621,12 +4710,15 @@ function cashflowPlan(days){
     const d=addDays(today,i), dom=+d.slice(8,10);
     const ev=[];
     if(i>0){
-      incF.forEach(f=>{if(+f.day===dom){bal+=+f.amount||0;ev.push({t:'in',n:f.name,v:+f.amount||0})}});
-      expF.forEach(f=>{if(+f.day===dom&&f.payKind!=='card'){bal-=+f.amount||0;ev.push({t:'out',n:f.name,v:+f.amount||0})}});
-      forced.forEach(a=>{if(+a.payDay===dom){bal-=+a.monthly||0;
+      const dym=d.slice(0,7);
+      // ⚠️ 기간(시작·종료)을 날짜 단위로 본다. 예전엔 여기서 안 봐서, 이미 끝난 고정비가
+      //    앞으로의 잔액 곡선에서 매달 계속 빠져나갔다(부족 경고까지 틀리게 만들었다).
+      incF.forEach(f=>{if(domIn(f.day,dym)===dom&&fixedOnDate(f,d)){bal+=+f.amount||0;ev.push({t:'in',n:f.name,v:+f.amount||0})}});
+      expF.forEach(f=>{if(domIn(f.day,dym)===dom&&f.payKind!=='card'&&fixedOnDate(f,d)){bal-=+f.amount||0;ev.push({t:'out',n:f.name,v:+f.amount||0})}});
+      forced.forEach(a=>{if(domIn(a.payDay,dym)===dom&&(!a.maturity||a.maturity>=d)){bal-=+a.monthly||0;
         ev.push({t:'save',n:a.name,v:+a.monthly||0})}});
       S.cards.filter(c=>c.type==='credit'&&+c.payDay>0).forEach(c=>{
-        if(+c.payDay!==dom)return;
+        if(domIn(c.payDay,dym)!==dom)return;
         seen[c.id]=(seen[c.id]||0)+1;
         // 첫 결제일은 실제 미결제액, 그 다음부터는 이번 달 사용 페이스로 추정
         const amt=seen[c.id]===1?Math.round(creditPendingNet(c)):Math.round(cardMonthSpend(c.id,ym));
@@ -7074,7 +7166,11 @@ autoApplySaving();
 autoPrepayCards();   // 지정 요일이 지났으면 자동 선결제
 recordScore();
 touchNetHist();
-fxRecord(fxRate());                 // 자동 갱신이 막혀도 하루 한 점은 남긴다
+/* ⚠️ 실제로 받아온 환율만 관측 기록에 남긴다.
+   예전엔 자동 갱신이 막혀도 매일 한 점씩 찍었는데, 그 값은 마지막으로 알던 값이거나
+   기본값(1380)이라 — 한 번도 못 받아온 사람에게도 8일이면 '자료 충분'으로 판정돼
+   "최근 6개월 중 낮은 편, 환전하기 괜찮은 구간" 같은 지어낸 신호가 떴다. */
+if(S.settings.fx&&S.settings.fx.at)fxRecord(fxRate());
 store.save(S);                      // 앱을 열기만 해도 그날의 순자산·환율은 남는다
 // 예전 '달력' 모드는 '날짜별'로 합쳐졌다 — 그 설정으로 저장돼 있으면 옮겨준다
 txView=(S.settings.txView==='cat')?'cat':'list';
