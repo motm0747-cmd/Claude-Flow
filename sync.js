@@ -23,7 +23,6 @@
   var BACKUP_KEY = 'claudeflow_conflict_backup';
   var BASE_KEY = 'claudeflow_sync_base';   // 마지막으로 동기화가 끝난 시점의 데이터(3-way 병합 기준)
   var TABLE    = 'flow_state';
-  var CAS_FN   = 'flow_state_cas';         // 조건부 저장 RPC (schema.sql 참고)
   var DEBOUNCE = 1500;                      // 저장 후 클라우드 업로드까지 대기(ms)
 
   /* ═══════════════════════════════════════════════════════════════════
@@ -397,6 +396,40 @@
 
     /* 조건부 저장 — 내가 알고 있던 리비전일 때만 쓴다.
        그 사이 다른 기기가 바꿨으면 서버가 거절하고 현재 값을 돌려주며, 여기서 합친다. */
+    /* ── 조건부 저장 (compare-and-swap) ─────────────────────────────────
+     * "내가 알던 리비전일 때만 쓴다". 그 사이 다른 기기가 바꿨으면 아무것도 쓰지 않는다.
+     *
+     * 이걸 DB 함수 없이 한다 — UPDATE 에 `rev = 내가 알던 값` 조건을 같이 걸면
+     * 그 자체가 한 문장짜리 원자적 CAS 다. 따로 SQL 을 실행할 필요가 없고,
+     * 이미 있는 rev 컬럼과 RLS 만으로 동작한다.
+     *
+     * .select() 를 붙이면 실제로 바뀐 행이 돌아온다 — 0건이면 조건이 안 맞은 것. */
+    _casWrite: function (data, expected) {
+      var self = this, uid = this.session.user.id, next = expected + 1;
+      return this.client.from(TABLE)
+        .update({ data: data, rev: next, updated_at: new Date().toISOString() })
+        .eq('user_id', uid).eq('rev', expected).select('rev')
+        .then(function (res) {
+          if (res.error) throw res.error;
+          if (res.data && res.data.length) return { ok: true, rev: next };
+          // 0건 — 행이 아예 없거나(첫 저장), 그 사이 누가 바꿨거나
+          return self.client.from(TABLE).select('data,rev').eq('user_id', uid).maybeSingle()
+            .then(function (cur) {
+              if (cur.error) throw cur.error;
+              if (cur.data) return { ok: false, rev: cur.data.rev || 0, data: cur.data.data };
+              // 아직 행이 없다 → 만든다. 그 찰나에 다른 기기가 먼저 만들었으면 충돌로 넘긴다
+              return self.client.from(TABLE)
+                .insert({ user_id: uid, data: data, rev: 1, updated_at: new Date().toISOString() })
+                .select('rev')
+                .then(function (ins) {
+                  if (!ins.error) return { ok: true, rev: 1 };
+                  if (String(ins.error.code) === '23505') return { ok: false, rev: -1 };  // 동시 생성
+                  throw ins.error;
+                });
+            });
+        });
+    },
+
     push: function (force) {
       if (!this.session || !this.client) return Promise.resolve();
       if (!this.dirty && !force) return Promise.resolve();
@@ -406,39 +439,13 @@
       var self = this, expected = this.knownRev || 0;
       this.setStatus('syncing');
 
-      return this.client.rpc(CAS_FN, { p_data: local, p_expected: expected })
-        .then(function (res) {
-          if (res.error) {
-            if (self._casMissing(res.error)) return self._pushLegacy(local, expected);
-            throw res.error;
-          }
-          var row = Array.isArray(res.data) ? res.data[0] : res.data;
-          if (!row) throw new Error('저장 응답이 비어 있어요');
-          if (row.ok) { self._afterPush(local, row.rev); return; }
-          return self._resolveConflict(local, row);        // ← 동시 편집
+      return this._casWrite(local, expected)
+        .then(function (r) {
+          if (r.ok) { self._retry = 0; self._afterPush(local, r.rev); return; }
+          if (r.rev < 0) return self.pull(true).then(function () { return self.push(true); });
+          return self._resolveConflict(local, r);          // ← 동시 편집
         })
         .catch(function (e) { self.setStatus('error', self._msg(e)); });
-    },
-
-    /* 스키마 업데이트를 아직 안 한 프로젝트 — 예전 방식으로 동작시키되 사실대로 알린다 */
-    _casMissing: function (e) {
-      var s = ((e && (e.code || '')) + ' ' + (e && (e.message || ''))).toLowerCase();
-      return s.indexOf('pgrst202') >= 0 || s.indexOf('could not find the function') >= 0 ||
-             s.indexOf('does not exist') >= 0 || s.indexOf('404') >= 0;
-    },
-    _pushLegacy: function (local, expected) {
-      var self = this, nextRev = expected + 1;
-      if (!this._warnedCas) {
-        this._warnedCas = true;
-        try { console.warn('[Sync] flow_state_cas 함수가 없어 예전 방식으로 저장합니다. supabase/schema.sql 의 마지막 블록을 실행해주세요.'); } catch (e) {}
-      }
-      return this.client.from(TABLE).upsert({
-        user_id: this.session.user.id, data: local, rev: nextRev, updated_at: new Date().toISOString()
-      }, { onConflict: 'user_id' }).then(function (res) {
-        if (res.error) throw res.error;
-        self._afterPush(local, nextRev);
-        self.setStatus('synced', '⚠️ 동시 편집 보호가 꺼져 있어요 — schema.sql 을 다시 실행해주세요');
-      });
     },
 
     _afterPush: function (data, rev) {
@@ -465,11 +472,9 @@
       var merged = merge3(base, local, theirs);
       var s = merged.summary;
 
-      return this.client.rpc(CAS_FN, { p_data: merged.data, p_expected: row.rev })
-        .then(function (res2) {
-          if (res2.error) throw res2.error;
-          var r2 = Array.isArray(res2.data) ? res2.data[0] : res2.data;
-          if (!r2 || !r2.ok) {                     // 합치는 사이 또 바뀜 → 한 번 더
+      return this._casWrite(merged.data, row.rev)
+        .then(function (r2) {
+          if (!r2.ok) {                            // 합치는 사이 또 바뀜 → 한 번 더
             if ((self._retry = (self._retry || 0) + 1) > 3) throw new Error('동기화가 계속 부딪혀요. 잠시 후 다시 시도해주세요');
             return self.push(true);
           }

@@ -132,55 +132,16 @@ create policy "push_subscriptions are private to owner"
   with check (auth.uid() = user_id);
 
 -- ══════════════════════════════════════════════════════════════════════
--- 동시 편집 안전장치 (compare-and-swap)
+-- 동시 편집 안전장치 — 따로 실행할 것이 없습니다
 --
--- ⚠️ 이 함수가 없으면 두 기기가 같은 시점에서 저장할 때 한쪽 기록이 조용히 사라진다.
---    upsert 는 조건 없이 덮어쓰기 때문이다:
---      폰 rev 5 → 6 저장, PC 도 rev 5 → 6 저장 → 폰이 쓴 내용이 통째로 날아감.
+-- 두 기기가 같은 시점에서 저장하면 한쪽 기록이 사라질 수 있습니다. 앱은 이걸
+-- "내가 알던 리비전일 때만 쓴다"로 막는데, 그 조건을 DB 함수가 아니라
+-- UPDATE 문에 직접 겁니다.
 --
--- 그래서 "내가 알고 있던 리비전일 때만 쓴다". 그 사이 누가 바꿨으면 쓰지 않고
--- 현재 값을 돌려주며, 합치는 일은 앱(sync.js)이 한다.
+--   update flow_state set data = ..., rev = rev + 1
+--    where user_id = auth.uid() and rev = <내가 알던 값>
 --
--- 기존 프로젝트에 이 블록만 따로 실행해도 안전하다 (앱은 함수가 없으면
--- 예전 방식으로 동작하되 경고를 띄운다).
+-- 한 문장 안의 WHERE 라서 그 자체가 원자적입니다. 위에서 만든 rev 컬럼과 RLS
+-- 만으로 동작하므로, 이 파일에서 테이블만 만들면 보호가 켜집니다.
+-- (그 사이 누가 바꿨으면 0행이 바뀌고, 앱이 양쪽을 3-way 로 합칩니다)
 -- ══════════════════════════════════════════════════════════════════════
-create or replace function public.flow_state_cas(p_data jsonb, p_expected bigint)
-returns table (ok boolean, rev bigint, data jsonb)
-language plpgsql
-security invoker                    -- RLS 를 그대로 적용받는다 (본인 행만)
-set search_path = public
-as $$
-declare
-  cur_rev bigint;
-begin
-  select fs.rev into cur_rev from public.flow_state fs where fs.user_id = auth.uid();
-
-  -- 아직 행이 없다 → 처음 올리는 경우(expected 0)만 만든다
-  if cur_rev is null then
-    if coalesce(p_expected, 0) <> 0 then
-      return query select false, 0::bigint, null::jsonb;   -- 누가 지웠다 → 앱이 판단
-      return;
-    end if;
-    insert into public.flow_state(user_id, data, rev, updated_at)
-      values (auth.uid(), p_data, 1, now());
-    return query select true, 1::bigint, null::jsonb;
-    return;
-  end if;
-
-  -- 그 사이 다른 기기가 바꿨다 → 쓰지 않고 현재 값을 돌려준다
-  if cur_rev <> coalesce(p_expected, 0) then
-    return query
-      select false, cur_rev, fs.data from public.flow_state fs where fs.user_id = auth.uid();
-    return;
-  end if;
-
-  update public.flow_state
-     set data = p_data, rev = cur_rev + 1, updated_at = now()
-   where user_id = auth.uid() and rev = p_expected;
-
-  return query select true, cur_rev + 1, null::jsonb;
-end;
-$$;
-
-revoke all on function public.flow_state_cas(jsonb, bigint) from public;
-grant execute on function public.flow_state_cas(jsonb, bigint) to authenticated;

@@ -13,36 +13,53 @@ import { ROOT, makeOk } from './lib/env.mjs';
 const ok = makeOk();
 const SRC = fs.readFileSync(path.join(ROOT, 'sync.js'), 'utf8');
 
-/* ── 가짜 서버 ── */
-function makeServer({ cas = true } = {}) {
+/* ── 가짜 서버 ──
+   PostgREST 의 의미를 그대로 흉내 낸다.
+     update(...).eq('user_id',u).eq('rev',N).select()  →  조건이 맞는 행만 바뀌고 그 행이 돌아온다
+   `legacy:true` 면 예전처럼 조건 없이 덮어쓰는 서버가 된다(고치기 전 동작 재현용). */
+function makeServer({ legacy = false } = {}) {
   const row = { data: null, rev: 0 };
   return {
     row,
     client(name, log) {
       return {
-        rpc(fn, args) {
-          if (!cas || fn !== 'flow_state_cas') {
-            return Promise.resolve({ error: { code: 'PGRST202', message: 'Could not find the function' } });
-          }
-          const expected = args.p_expected || 0;
-          if (row.rev !== expected) {           // 그 사이 누가 바꿨다 → 거절 + 현재 값
-            log.push(`${name} 거절 (expected ${expected} ≠ 서버 ${row.rev})`);
-            return Promise.resolve({ data: [{ ok: false, rev: row.rev, data: row.data }], error: null });
-          }
-          row.data = args.p_data; row.rev = expected + 1;
-          log.push(`${name} 저장 rev=${row.rev}`);
-          return Promise.resolve({ data: [{ ok: true, rev: row.rev, data: null }], error: null });
-        },
         from() {
-          const q = {
-            select: () => q, eq: () => q,
-            maybeSingle: () => Promise.resolve({ data: row.rev ? { data: row.data, rev: row.rev } : null, error: null }),
-            upsert(r) {                          // 예전 방식 — 조건 없이 덮어쓴다
-              const over = row.rev >= r.rev && row.data !== null;
-              log.push(`${name} upsert rev=${r.rev}${over ? ' ← 덮어씀' : ''}`);
-              row.data = r.data; row.rev = r.rev;
-              return Promise.resolve({ error: null });
-            },
+          const q = { _upd: null, _eq: {} };
+          q.select = () => {
+            if (!q._upd) return q;                       // 읽기용 체인
+            // ── 조건부 UPDATE 실행 ──
+            const wantRev = q._eq.rev;
+            const exists = row.data !== null || row.rev > 0;
+            if (legacy) {                                // 예전: 조건 무시하고 덮어씀
+              const over = exists && row.rev >= q._upd.rev;
+              log.push(`${name} 덮어쓰기 rev=${q._upd.rev}${over ? ' ← 상대 것 지움' : ''}`);
+              row.data = q._upd.data; row.rev = q._upd.rev;
+              return Promise.resolve({ data: [{ rev: row.rev }], error: null });
+            }
+            if (exists && row.rev === wantRev) {
+              row.data = q._upd.data; row.rev = q._upd.rev;
+              log.push(`${name} 저장 rev=${row.rev}`);
+              return Promise.resolve({ data: [{ rev: row.rev }], error: null });
+            }
+            log.push(`${name} 거절 (내가 알던 rev ${wantRev} ≠ 서버 ${row.rev})`);
+            return Promise.resolve({ data: [], error: null });   // 0행 = 조건 불일치
+          };
+          q.update = (v) => { q._upd = v; return q; };
+          q.insert = (v) => {
+            if (row.data !== null || row.rev > 0) {
+              return { select: () => Promise.resolve({ error: { code: '23505' } }) };
+            }
+            row.data = v.data; row.rev = v.rev;
+            log.push(`${name} 생성 rev=${row.rev}`);
+            return { select: () => Promise.resolve({ data: [{ rev: row.rev }], error: null }) };
+          };
+          q.eq = (k, v) => { q._eq[k] = v; return q; };
+          q.maybeSingle = () => Promise.resolve({
+            data: (row.data !== null || row.rev > 0) ? { data: row.data, rev: row.rev } : null, error: null });
+          q.upsert = (r) => {                            // 예전 경로(강제 덮어쓰기)에서만 쓰인다
+            log.push(`${name} upsert rev=${r.rev}`);
+            row.data = r.data; row.rev = r.rev;
+            return Promise.resolve({ error: null });
           };
           return q;
         },
@@ -112,6 +129,22 @@ const TX = (id, memo) => ({ id, type: 'expense', date: '2026-09-15', amount: 100
      pc.read().tx.map((t) => t.id).join(','));
 }
 
+/* ══════ ①-b 조건 없이 덮어쓰는 서버였다면 어떻게 되는가 (대조) ══════ */
+{
+  const log = [], srv = makeServer({ legacy: true });
+  const start = { tx: [TX('t1', '기존')], accounts: [], settings: {} };
+  srv.row.data = start; srv.row.rev = 5;
+  const phone = makeDevice('폰', srv, log, {
+    data: { ...start, tx: [TX('t1', '기존'), TX('t2', '폰')] }, rev: 5, base: start });
+  const pc = makeDevice('PC', srv, log, {
+    data: { ...start, tx: [TX('t1', '기존'), TX('t3', 'PC')] }, rev: 5, base: start });
+  await phone.Sync.push();
+  await pc.Sync.push();
+  const ids = srv.row.data.tx.map((t) => t.id).sort();
+  ok('(대조) 조건이 없으면 한쪽이 사라진다', !ids.includes('t2'), ids.join(','));
+  ok('  그래서 지금은 조건을 건다', log.some((l) => /상대 것 지움/.test(l)), log.join(' | '));
+}
+
 /* ══════ ② 삭제가 되살아나면 안 된다 ══════ */
 {
   const log = [], srv = makeServer();
@@ -175,17 +208,21 @@ const TX = (id, memo) => ({ id, type: 'expense', date: '2026-09-15', amount: 100
   ok('기준이 없어도 양쪽이 합쳐짐(합집합)', ids.join(',') === 't1,t5,t6', ids.join(','));
 }
 
-/* ══════ ⑥ CAS 함수가 없는 프로젝트 — 동작은 하되 사실대로 알린다 ══════ */
+/* ══════ ⑥ 따로 설정하지 않아도 보호가 켜져 있다 ══════
+   예전엔 DB 함수를 직접 실행해야 했고, 안 한 사람은 조용히 위험한 상태였다.
+   지금은 UPDATE 조건만으로 하므로 테이블만 있으면 바로 동작한다. */
 {
-  const log = [], srv = makeServer({ cas: false });
+  const log = [], srv = makeServer();
   srv.row.data = { tx: [TX('t1', '기존')], accounts: [], settings: {} }; srv.row.rev = 5;
   let status = null;
   const phone = makeDevice('폰', srv, log, {
-    data: { tx: [TX('t1', '기존'), TX('t2', '폰')], accounts: [], settings: {} }, rev: 5, base: null });
-  phone.Sync.setStatus = (s, m) => { status = { s, m }; };
+    data: { tx: [TX('t1', '기존'), TX('t2', '폰')], accounts: [], settings: {} },
+    rev: 5, base: null, realStatus: true });
+  phone.Sync.emit = () => { status = { s: phone.Sync.status, m: phone.Sync.lastError }; };
   await phone.Sync.push();
-  ok('스키마 업데이트 전이어도 저장은 됨', srv.row.rev === 6 && srv.row.data.tx.length === 2, `rev=${srv.row.rev}`);
-  ok('  보호가 꺼져 있다고 알림', /동시 편집 보호가 꺼져/.test((status && status.m) || ''), (status && status.m) || '없음');
+  ok('추가 설정 없이 저장됨', srv.row.rev === 6, `rev=${srv.row.rev}`);
+  ok('  경고 문구가 뜨지 않음', !((status && status.m) || ''), (status && status.m) || '(없음)');
+  ok('  SQL 함수를 부르지 않음', !/rpc\(/.test(SRC), 'sync.js 에 rpc 호출 없음');
 }
 
 /* ══════ ⑦ realtime — 같은 rev 를 내 것으로 단정하던 구멍 ══════ */
@@ -200,13 +237,15 @@ const TX = (id, memo) => ({ id, type: 'expense', date: '2026-09-15', amount: 100
 
 /* ══════ ⑧ 진짜 sync.js 안의 조건을 확인 ══════ */
 {
-  ok('sync.js 가 조건부 저장(RPC)을 쓴다', /rpc\(CAS_FN/.test(SRC));
+  // 조건부 저장을 UPDATE 의 WHERE 로 건다 — DB 함수가 없어도 원자적이다
+  ok('저장할 때 리비전 조건을 건다', /\.eq\('rev', expected\)/.test(SRC));
+  ok('  바뀐 행을 돌려받아 성공을 판정한다', /\.select\('rev'\)/.test(SRC) && /res\.data\.length/.test(SRC));
   ok('  realtime 조건이 !== 로 바뀌었다', /r !== self\.knownRev/.test(SRC));
   ok('  병합 기준(base)을 저장한다', /BASE_KEY/.test(SRC) && /localStorage\.setItem\(BASE_KEY/.test(SRC));
   const sql = fs.readFileSync(path.join(ROOT, 'supabase/schema.sql'), 'utf8');
-  ok('schema.sql 에 CAS 함수가 있다', /create or replace function public\.flow_state_cas/.test(sql));
-  ok('  RLS 를 우회하지 않는다 (security invoker)', /security invoker/.test(sql));
-  ok('  리비전이 맞을 때만 쓴다', /where user_id = auth\.uid\(\) and rev = p_expected/.test(sql));
+  ok('스키마에 rev 컬럼과 RLS 가 있다',
+     /rev\s+bigint/.test(sql) && /auth\.uid\(\) = user_id/.test(sql));
+  ok('  따로 실행할 함수가 없다', !/create or replace function public\.flow_state_cas/.test(sql));
 }
 
 /* ══════ ⑨ 성공하면 지난 오류 문구가 남지 않는다 ══════
@@ -224,15 +263,3 @@ const TX = (id, memo) => ({ id, type: 'expense', date: '2026-09-15', amount: 100
      `status=${phone.Sync.status} err="${phone.Sync.lastError}"`);
 }
 
-/* ══════ ⑩ 보호가 꺼진 상태는 계속 보여야 한다 ══════ */
-{
-  const log = [], srv = makeServer({ cas: false });
-  srv.row.data = { tx: [TX('t1', '기존')], accounts: [], settings: {} }; srv.row.rev = 5;
-  const phone = makeDevice('폰', srv, log, {
-    data: { tx: [TX('t1', '기존'), TX('t2', '폰')], accounts: [], settings: {} },
-    rev: 5, base: null, realStatus: true });
-  await phone.Sync.push();
-  ok('CAS 가 없으면 성공해도 경고가 남음',
-     phone.Sync.status === 'synced' && /동시 편집 보호가 꺼져/.test(phone.Sync.lastError),
-     `"${phone.Sync.lastError}"`);
-}
