@@ -56,6 +56,7 @@ const SUITES = [
   'home.test.mjs', 'ui.test.mjs', 'start.test.mjs', 'feat.test.mjs', 'feat2.test.mjs',
   'inv.test.mjs', 'flow.test.mjs', 'final.mjs',
   'click.test.mjs', 'pc.test.mjs', 'subpath.test.mjs', 'audit.mjs',
+  'robust.test.mjs', 'newphone.test.mjs',
   'digest.test.mjs', 'digest2.test.mjs', 'webpush.test.mjs',
 ];
 
