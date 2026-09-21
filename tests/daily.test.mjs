@@ -302,5 +302,142 @@ const seed = (txN = 0) => p.evaluate((n) => {
   ok('  잔액도 원래대로', !!r.back && r.back.bal === r.bal0, r.back ? `${r.bal0} → ${r.back.bal}` : r._err);
 }
 
+
+/* ══════ ⑤ 접힌 칸에 옛 값이 남으면 안 된다 ══════
+ * 할부·간편결제·실적 제외는 해당 카드일 때만 그려진다. 결제수단을 바꾸면 칸은 사라지는데
+ * 초안에는 값이 남아 `현금인데 12개월 할부`가 조용히 저장됐다. 예전에도 그랬지만 칸이
+ * 늘 보였기에 눈에 띄었고, 이제는 상세 설정 안이라 확인할 방법이 없다.
+ * pendingOfTx·duePortions 가 그걸 할부로 계산하면 결제 예정액이 통째로 틀어진다. */
+{
+  await seed(0);
+  const r = await ev(() => {
+    S.cards[0].perks = [{ id: 'p1', name: '간편', cat: '전체', kind: 'percent', value: 1, via: 'simple', tier: 0 }];
+    save();
+    openTxModal(); txDraft.payKind = 'card'; txDraft.payId = 'c1'; txDraft.amount = '1200000';
+    txMoreOpen = true; renderTxModal();
+    document.getElementById('tx-months').value = '12';
+    if (document.getElementById('tx-via')) document.getElementById('tx-via').checked = true;
+    if (document.getElementById('tx-noperf')) document.getElementById('tx-noperf').checked = true;
+    syncTxDraft(); renderTxModal();
+    const picked = { m: txDraft.months, via: txDraft.via, noPerf: txDraft.noPerf };
+    document.getElementById('tx-pay').value = 'cash|';       // 현금으로 바꾼다
+    syncTxDraft(); renderTxModal();
+    saveTx();
+    const t = S.tx[0] || {};
+    return { picked, saved: { m: t.months, via: t.via, noPerf: t.noPerf, pay: t.payKind },
+      cardPend: creditPending(cardById('c1')), due: duePortions(t) };
+  });
+  ok('카드에서 할부·간편결제·실적제외를 골랐고', !!r.picked && r.picked.m === 12 && r.picked.via === 'simple' && r.picked.noPerf,
+    JSON.stringify(r.picked));
+  ok('  현금으로 바꾸면 할부가 따라 지워진다', r.saved && r.saved.m === 1, `months=${(r.saved || {}).m}`);
+  ok('  간편결제도', !(r.saved || {}).via, `via="${(r.saved || {}).via}"`);
+  ok('  실적 제외도', !(r.saved || {}).noPerf, `noPerf=${(r.saved || {}).noPerf}`);
+  ok('  현금 결제가 카드 결제 예정에 끼지 않는다', r.cardPend === 0, `${r.cardPend}원`);
+  ok('  회차로 쪼개지지도 않는다', r.due === 1, `${r.due}회차`);
+}
+
+/* ══════ ⑤-b 카드가 지워진 옛 기록은 건드리지 않는다 ══════
+   메모만 고치려고 열었는데 할부가 일시불로 바뀌면 결제 예정이 조용히 달라진다. */
+{
+  await seed(0);
+  const r = await ev(() => {
+    S.tx = [{ id: 'old', type: 'expense', date: addDays(todayStr(), -60), amount: 1200000,
+      cat: '쇼핑', memo: '노트북', payKind: 'card', payId: 'gone', months: 12, paidPortions: 2 }];
+    save();
+    openTxModal('old');
+    document.getElementById('tx-memo').value = '노트북(수리)';
+    saveTx();
+    return { m: S.tx[0].months, paid: S.tx[0].paidPortions, memo: S.tx[0].memo };
+  });
+  ok('카드가 사라진 할부 기록은 회차가 유지된다', r.m === 12 && r.paid === 2, `${r.m}개월 · ${r.paid}회차`);
+  ok('  고치려던 메모는 바뀐다', r.memo === '노트북(수리)', r.memo);
+}
+
+/* ══════ ⑥ 이름에 따옴표가 든 카테고리도 고를 수 있어야 한다 ══════
+ * 카테고리는 사용자가 직접 추가할 수 있다. 이름을 onclick 속성 안의 JS 문자열에 그대로
+ * 넣으면 `갈비'집` 하나로 그 칸이 통째로 죽는다(문법 오류라 눌러도 아무 일도 안 일어난다). */
+{
+  await seed(0);
+  const r = await ev(() => {
+    S.cats = { exp: [['🍖', "갈비'집"], ['🍚', '식비'], ['🥤', '카페<>"&'], ['🍜', '라멘\\집']], inc: null };
+    save();
+    openTxModal(); txCatOpen = true; renderTxModal();
+    const pick = (needle) => {
+      const c = [...document.querySelectorAll('#sheet .cat-cell')].find((x) => x.textContent.includes(needle));
+      if (!c) return '(칸 없음)';
+      c.click();
+      return txDraft.cat;
+    };
+    const a = pick('갈비');
+    txCatOpen = true; renderTxModal();
+    const b2 = pick('카페<');
+    txCatOpen = true; renderTxModal();
+    const c2 = pick('라멘');
+    return { a, b: b2, c: c2, html: document.getElementById('sheet').innerHTML.includes('<script') };
+  });
+  ok("따옴표가 든 이름을 고를 수 있다", r.a === "갈비'집", String(r.a));
+  ok('  꺾쇠·따옴표·앰퍼샌드가 든 이름도', r.b === '카페<>"&', String(r.b));
+  ok('  역슬래시가 든 이름도', r.c === '라멘\\집', String(r.c));
+  ok('  이름이 태그로 새지 않는다', r.html === false);
+}
+
+/* ══════ ⑦ '이거 사도 될까'에서 고른 할부가 사라지지 않는다 ══════ */
+{
+  await seed(0);
+  const r = await ev(() => {
+    S.settings.lastPay = { payKind: 'cash', payId: '' };   // 직전 결제수단이 현금
+    save();
+    openBuyModal();
+    document.getElementById('buy-amt').value = '1,500,000';
+    document.getElementById('buy-months').value = '6';
+    renderBuyResult(); buyToTx();
+    return { amt: (document.getElementById('tx-amt') || {}).value, m: txDraft.months,
+      pay: txDraft.payKind, open: !!document.getElementById('tx-months') };
+  });
+  ok('금액이 그대로 넘어간다', String((r || {}).amt) === '1500000', String((r || {}).amt));
+  ok('  고른 할부가 살아 있다', r.m === 6, `${r.m}개월`);
+  ok('  할부가 되는 결제수단으로 맞춰준다', r.pay === 'card', r.pay);
+  ok('  상세가 열려 방금 고른 할부가 보인다', r.open);
+}
+
+/* ══════ ⑥-b 같은 문제가 있던 다른 화면들 ══════
+   카테고리 이름은 예산·카드 혜택 제외·내역 탭 접기에도 그대로 들어간다. */
+{
+  const r = await ev(() => {
+    S.cats = { exp: [['🍖', "갈비'집"], ['🍚', '식비']], inc: null };
+    S.accounts = [{ id: 'chk', type: 'checking', name: '주거래', balance: 1000000, cur: 'KRW' }];
+    S.cards = [{ id: 'c1', type: 'credit', name: '신용', accountId: 'chk', payDay: 14,
+      tiers: [], exclCats: [], perks: [], prepays: [] }];
+    S.tx = [{ id: 'a', type: 'expense', date: todayStr(), amount: 30000, cat: "갈비'집",
+      memo: '회식', payKind: 'account', payId: 'chk' }];
+    S.budgets = {}; S.budgets[thisYM()] = { total: 500000, cats: { "갈비'집": 100000, '식비': 50000 } };
+    _discInvalidate(); save(); renderAll();
+    const out = {};
+
+    openBudgetModal();
+    const rm = [...document.querySelectorAll('#sheet .btn.ghost.sm')].filter((x) => x.textContent.trim() === '✕');
+    const n0 = Object.keys(bdDraft.cats || {}).length;
+    if (rm[0]) rm[0].click();
+    out.budget = { before: n0, after: Object.keys(bdDraft.cats || {}).length };
+    closeModal();
+
+    openCardModal('c1');
+    const badge = [...document.querySelectorAll('#sheet .badge')].find((x) => /갈비/.test(x.textContent));
+    if (badge) badge.click();
+    out.excl = (cardDraft.exclCats || []).includes("갈비'집");
+    closeModal();
+
+    switchView('cal'); setTxView('cat');
+    const head = [...document.querySelectorAll('.cat-head')].find((x) => /갈비/.test(x.textContent));
+    if (head) head.click();
+    out.cal = !!openCats["갈비'집"];
+    switchView('home');
+    return out;
+  });
+  ok('예산에서 따옴표 이름을 지울 수 있다', !!r.budget && r.budget.after === r.budget.before - 1, JSON.stringify(r.budget));
+  ok('  카드 혜택 제외도 눌린다', r.excl === true, String(r.excl));
+  ok('  내역 탭 카테고리별 접기도', r.cal === true, String(r.cal));
+}
+
 ok('콘솔/페이지 오류 없음', errs.length === 0, errs.slice(0, 3).join(' | ') || '없음');
 await b.close();

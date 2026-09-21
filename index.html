@@ -912,7 +912,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20260921-daily';
+const APP_BUILD='20260921-audit';
 const KEY='claudeflow_v1';
 const BROKEN_KEY='claudeflow_broken';   // 읽지 못한 원본을 옮겨 두는 곳(복구용)
 const store={
@@ -1184,6 +1184,14 @@ const daysIn=ym=>{const[y,m]=ym.split('-').map(Number);return new Date(y,m,0).ge
 const domIn=(day,ym)=>Math.min(Math.max(1,Math.round(+day)||1),daysIn(ym||thisYM()));
 const domDate=(day,ym)=>`${ym}-${pad(domIn(day,ym))}`;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+/* onclick="fn('여기')" 안에 들어갈 값.
+ * esc() 를 쓰면 작은따옴표가 &#39; 가 되는데, HTML 파서가 그걸 다시 ' 로 되돌린 뒤에야
+ * JS 가 읽는다 — 즉 esc() 로는 JS 문법이 깨지는 걸 못 막는다. (카테고리 이름은 사용자가
+ * 직접 지을 수 있어서 `갈비'집` 같은 게 실제로 들어온다. 그러면 그 칸이 통째로 죽는다.)
+ * 따옴표는 JS 이스케이프로 남기고, HTML 쪽을 끝내버릴 수 있는 문자만 엔티티로 바꾼다. */
+const jsq=s=>String(s??'')
+  .replace(/\\/g,'\\\\').replace(/'/g,"\\'")
+  .replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
 const accById=id=>S.accounts.find(a=>a.id===id);
 const cardById=id=>S.cards.find(c=>c.id===id);
 /* ── DOM/공통 헬퍼 (중복 제거) ── */
@@ -1761,10 +1769,18 @@ function buyToTx(){
   const amt=Math.round(numVal('buy-amt'));
   if(!(amt>0))return toast('금액을 넣어주세요');
   const name=(($('buy-name')||{}).value||'').trim();
-  const m=Math.max(1,Math.min(12,+($('buy-months')||{}).value||1));
+  let m=Math.max(1,Math.min(12,+($('buy-months')||{}).value||1));
   closeModal();
   openTxModal();
+  /* 할부는 신용카드에서만 된다. 직전 결제수단이 현금·체크면 회차가 조용히 사라지므로
+     결제수단을 신용카드로 맞춰준다 — 없으면 일시불이라고 말하고 넘긴다. */
+  if(m>1){
+    const cc=S.cards.find(c=>c.type==='credit');
+    if(cc){ txDraft.payKind='card'; txDraft.payId=cc.id; txDraft.autoPay=false; }
+    else { m=1; toast('신용카드가 없어 일시불로 넣었어요'); }
+  }
   txDraft.amount=amt; txDraft.memo=name; txDraft.months=m; txDraft.paidPortions=0;
+  txMoreOpen=m>1;   // 방금 고른 할부는 보이게 — 접힌 채로 넘기면 정한 걸 확인할 수 없다
   renderTxModal();
 }
 function openSafeModal(){
@@ -2164,9 +2180,9 @@ function renderTxModal(){
         <span class="cv" id="tx-cat-chip">${CAT_EMO[d.cat]||'💸'} ${esc(d.cat)}</span>
         <span class="ca">${txCatOpen?'접기 ▴':'바꾸기 ▾'}</span></button>
       ${txCatOpen?`<div class="cat-recent">${recentCats(d.type).map(n=>
-          `<button type="button" class="btn ${d.cat===n?'primary':'ghost'} sm" onclick="txPickCat('${esc(n)}')">${CAT_EMO[n]||'💸'} ${esc(n)}</button>`).join('')}</div>
+          `<button type="button" class="btn ${d.cat===n?'primary':'ghost'} sm" onclick="txPickCat('${jsq(n)}')">${CAT_EMO[n]||'💸'} ${esc(n)}</button>`).join('')}</div>
         <div class="cat-grid" style="margin-top:9px">${cats.map(([e,n])=>
-          `<div class="cat-cell ${d.cat===n?'on':''}" onclick="txPickCat('${esc(n)}')"><div class="ce">${e}</div><div class="cl">${n}</div></div>`).join('')}</div>`:''}
+          `<div class="cat-cell ${d.cat===n?'on':''}" onclick="txPickCat('${jsq(n)}')"><div class="ce">${e}</div><div class="cl">${esc(n)}</div></div>`).join('')}</div>`:''}
     </div>`;
   const moreSum=txMoreSummary();
   const more=`<div style="border-top:1px solid var(--line);margin-top:4px">
@@ -2358,6 +2374,24 @@ function syncTxDraft(){
   if(g('tx-from'))txDraft.fromId=g('tx-from').value;
   if(g('tx-to'))txDraft.toId=g('tx-to').value;
   if(g('tx-pay')&&g('tx-pay').value){const[k,i]=g('tx-pay').value.split('|');txDraft.payKind=k;txDraft.payId=i||'';}
+  clearCardOnly();
+}
+/* 카드에만 있는 값은 결제수단을 바꾸면 따라 지운다.
+ * 이 칸들은 해당 카드일 때만 그려지므로, 현금으로 바꾸면 칸이 사라지면서 값만 초안에 남는다.
+ * 예전에도 그랬지만 칸이 늘 보였기에 눈에 띄었는데, 이제 상세 설정 안으로 접혀 있어
+ * 사용자가 확인할 방법이 없다 — `현금인데 12개월 할부`가 조용히 저장되면
+ * pendingOfTx·duePortions 가 그걸 할부로 계산해 결제 예정액이 통째로 틀어진다. */
+function clearCardOnly(){
+  const d=txDraft;
+  if(d.type==='transfer')return;
+  if(d.payKind==='card'){
+    const c=cardById(d.payId||'');
+    if(!c)return;                                  // 카드가 지워진 옛 기록 — 여기서 더 건드리지 않는다
+    if(c.type!=='credit'){ d.months=1; d.paidPortions=0; }
+    if(!(c.perks||[]).some(x=>x.via==='simple'))d.via='';
+    return;
+  }
+  d.months=1; d.paidPortions=0; d.noPerf=false; d.via='';
 }
 /* 잔액 반영: 체크카드/계좌/수입은 즉시, 신용카드는 결제 처리 때 */
 // 거래 금액(t.amount)은 항상 원화. 계좌 통화에 맞춰 환산해 반영.
@@ -4438,7 +4472,7 @@ function txPickHint(){
   const diff=best.gain-(cur?cur.gain:0);
   el.innerHTML=diff>0
     ? `<div class="tiny" style="margin-top:5px">💡 <b>${esc(best.card.name)}</b>로 쓰면 <b class="pos">+${fmt(diff)}</b> 더 받아요
-        <span class="link" onclick="openCardPickModal({amount:${amt},cat:'${esc(d.cat)}',memo:${JSON.stringify(d.memo||'').replace(/"/g,'&quot;')},via:${d.via==='simple'}})">비교</span></div>`
+        <span class="link" onclick="openCardPickModal({amount:${amt},cat:'${jsq(d.cat)}',memo:'${jsq(d.memo||'')}',via:${d.via==='simple'}})">비교</span></div>`
     : '';
 }
 
@@ -4570,7 +4604,7 @@ function renderCardModal(){
         ? `💡 전월에 이 금액 이상 쓰면 다음 달 혜택이 열려요. 여러 구간은 쉼표로 구분.`
         : `✅ <b style="color:var(--green)">무실적 카드</b> — 실적 조건 없이 혜택이 항상 적용돼요. 실적 조건이 있는 카드만 금액을 입력하세요.`}</div></div>
     <div class="field"><label>실적 제외 카테고리 (카드사 약관 기준으로 선택)</label>
-      <div style="display:flex;flex-wrap:wrap;gap:6px">${EXP_CATS.map(([e,n])=>`<span class="badge ${c.exclCats.includes(n)?'terra':'gray'}" style="cursor:pointer;padding:6px 10px" onclick="toggleExcl('${n}')">${e} ${n}</span>`).join('')}</div></div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">${EXP_CATS.map(([e,n])=>`<span class="badge ${c.exclCats.includes(n)?'terra':'gray'}" style="cursor:pointer;padding:6px 10px" onclick="toggleExcl('${jsq(n)}')">${e} ${esc(n)}</span>`).join('')}</div></div>
     <div class="field"><label class="cb-row"><input type="checkbox" id="cd-noinst" ${c.noInstPerk!==false?'checked':''} onchange="syncCardDraft();renderCardModal()">
       <span>할부 결제는 적립·할인 제외</span></label>
       <div class="tiny" style="margin-top:4px">${c.noInstPerk!==false
@@ -5942,7 +5976,7 @@ function renderBudgetModal(){
     <div class="field"><label>카테고리별 예산 (선택)</label>
       ${cats.length?cats.map(([c,v])=>`<div class="row" style="padding:7px 10px;background:var(--bg);border-radius:10px;margin-bottom:6px">
         <span style="font-size:.85rem;font-weight:600">${CAT_EMO[c]||''} ${c}</span>
-        <span><b class="num" style="font-size:.85rem">${fmt(v)}</b> <button class="btn ghost sm" style="margin-left:6px" onclick="rmBdCat('${c}')">✕</button></span></div>`).join(''):'<div class="tiny" style="margin-bottom:6px">카테고리별로도 나눠서 관리할 수 있어요.</div>'}
+        <span><b class="num" style="font-size:.85rem">${fmt(v)}</b> <button class="btn ghost sm" style="margin-left:6px" onclick="rmBdCat('${jsq(c)}')">✕</button></span></div>`).join(''):'<div class="tiny" style="margin-bottom:6px">카테고리별로도 나눠서 관리할 수 있어요.</div>'}
       <div class="grid2">
         <div class="field" style="margin-bottom:0"><select id="bd-cat">${EXP_CATS.map(([e,n])=>`<option>${n}</option>`).join('')}</select></div>
         <div class="field" style="margin-bottom:0"><input type="text" inputmode="numeric" id="bd-cval" placeholder="금액"></div>
@@ -6705,7 +6739,7 @@ function renderByCat(list,ym){
   return`<div class="card tight">${rows.map(({c,arr,sum})=>{
     const open=!!openCats[c], pct=total>0?sum/total*100:0;
     return`<div class="cat-group">
-      <div class="cat-head" onclick="toggleCat('${c.replace(/'/g,"\\'")}')">
+      <div class="cat-head" onclick="toggleCat('${jsq(c)}')">
         <div class="c-emo">${CAT_EMO[c]||'💸'}</div>
         <div class="c-main">
           <div class="row"><span class="c-name">${esc(c)} <span class="tiny">${arr.length}건</span></span>
