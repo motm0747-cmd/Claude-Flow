@@ -44,9 +44,13 @@ for (const dev of [
 
   // ③ 금액 입력 + 카테고리 클릭 + 저장 — 전부 실제 조작
   await p.fill('#tx-amt', '23000');
+  // 카테고리는 칩으로 접혀 있다 — 눌러서 펼친 다음 고른다
+  await p.click('.pick-chip');
+  await p.waitForTimeout(150);
   const catCell = p.locator('.cat-cell', { hasText:'데이트' }).first();
   await catCell.click();
   await p.waitForTimeout(150);
+  ok('  고르면 격자가 다시 접힘', await p.evaluate(() => document.querySelectorAll('.cat-cell').length===0));
   ok('새 카테고리(데이트) 클릭 선택', await p.evaluate(() => txDraft.cat === '데이트'), await p.evaluate(()=>txDraft.cat));
   await p.fill('#tx-memo', '영화관');
   await p.click('button:has-text("저장")');

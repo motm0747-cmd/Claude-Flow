@@ -53,6 +53,7 @@ await p.evaluate(()=>{ S.accounts=[{id:'chk',type:'checking',name:'주거래',ba
   S.cards=[]; S.tx=[]; save(); renderAll(); });
 await p.click('.fab'); await p.waitForTimeout(200);
 await p.fill('#tx-amt','12000');
+await p.click('.pick-chip'); await p.waitForTimeout(120);
 await p.locator('.cat-cell',{hasText:'편의점'}).first().click(); await p.waitForTimeout(120);
 await p.click('button:has-text("저장")'); await p.waitForTimeout(250);
 ok('하위 경로에서 거래 입력·저장', await p.evaluate(()=>S.tx.length===1&&S.tx[0].cat==='편의점'));

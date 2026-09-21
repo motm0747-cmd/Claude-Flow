@@ -1,7 +1,12 @@
 import { chromium, APP, BASE } from './lib/env.mjs';
 const errs=[];
 const b=await chromium.launch();
-const p=await b.newPage({viewport:{width:430,height:900}});
+/* 시계를 박아둔다 — 잔액 곡선·부족 시점은 '오늘이 며칠인가'에 그대로 달려 있다.
+   고정한 날짜가 없으면 급여일(25)·카드 결제일(14)과의 거리가 매일 달라져
+   같은 코드가 어떤 날엔 통과하고 어떤 날엔 실패한다. */
+const ctx=await b.newContext({viewport:{width:430,height:900},timezoneId:'Asia/Seoul'});
+const p=await ctx.newPage();
+await p.clock.install({time:new Date('2026-09-10T10:00:00+09:00')});
 p.on('pageerror',e=>errs.push('PAGEERROR: '+e.message));
 p.on('console',m=>{const t=m.text(); if(m.type()==='error'&&!/net::|ERR_/.test(t))errs.push('CONSOLE: '+t);});
 await p.goto(BASE + '/',{waitUntil:'domcontentloaded'});

@@ -203,7 +203,13 @@ header{display:flex;align-items:center;justify-content:space-between;padding:20p
 @media (max-width:460px){
   .score-chip{padding:6px;gap:0}
   .score-chip>div:not(.score-ring):not([class]){display:none}
+  /* 단, '준비 중'일 때는 링 안에 숫자가 없다 — 빈 원만 남으면 아무 말도 못 한 셈이라 남긴다 */
+  .score-chip.pending{padding:6px 12px 6px 6px;gap:7px}
+  .score-chip .sc-note{display:block}
 }
+.score-chip .sc-note{line-height:1.25;white-space:nowrap}
+.score-chip .sc-note .k{font-size:var(--t-xs);color:var(--sub);font-weight:700}
+.score-chip .sc-note .v{font-size:.78rem;font-weight:800}
 
 /* ── 경고 카드 ── */
 .warn{background:var(--terra-soft);border:1px solid var(--terra-line);box-shadow:none}
@@ -374,6 +380,31 @@ input[type=date]{max-width:100%}
 .cat-cell.on{border-color:var(--terra);background:var(--terra-soft)}
 .cat-cell.on .cl{color:var(--terra-deep);font-weight:700}
 
+/* ── 지출 입력 ──────────────────────────────────────────────────────
+ * 매일 하는 일은 '금액과 가맹점을 적는 것' 하나다. 그 두 칸이 먼저 오고,
+ * 나머지는 앱이 채운 결과를 한 줄로 요약해 보여준다 — 틀렸을 때만 펼친다. */
+.amt-big{font-size:1.75rem;font-weight:800;letter-spacing:-0.02em;padding:12px 14px;text-align:right}
+.pick-chip{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;
+  border:1px solid var(--line);background:var(--surface);border-radius:var(--r-sm);
+  padding:11px 13px;font-size:var(--t-sm);font-weight:700;color:var(--ink);cursor:pointer;
+  font-family:inherit;transition:border-color .16s,background .16s}
+.pick-chip .cv{display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.pick-chip .ca{color:var(--faint);font-size:var(--t-xs);font-weight:600;flex-shrink:0}
+.pick-chip.on{border-color:var(--terra);background:var(--terra-soft)}
+.pick-chip:active{transform:scale(.99)}
+.cat-recent{display:flex;flex-wrap:wrap;gap:6px;margin:9px 0 0}
+.more-toggle{width:100%;border:none;background:none;color:var(--sub);font-size:var(--t-xs);
+  font-weight:700;padding:11px 2px;cursor:pointer;text-align:left;font-family:inherit;
+  display:flex;justify-content:space-between;gap:10px;align-items:center}
+.more-toggle .mv{color:var(--faint);font-weight:600;min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+/* 저장은 키보드 위에 붙여 둔다 — 스크롤해서 찾게 만들지 않는다 */
+.sheet-foot{position:sticky;bottom:calc(-1 * (12px + env(safe-area-inset-bottom)));
+  background:var(--bg);margin:14px -18px calc(-22px - env(safe-area-inset-bottom));
+  padding:11px 18px calc(11px + env(safe-area-inset-bottom));
+  border-top:1px solid var(--line);display:flex;gap:8px;z-index:3}
+
 /* ── 모달 ── */
 .overlay{position:fixed;inset:0;background:rgba(30,28,22,.42);display:none;align-items:flex-end;
   justify-content:center;z-index:50;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
@@ -423,6 +454,17 @@ input[type=date]{max-width:100%}
   transition:opacity .25s var(--ease),transform .25s var(--ease);pointer-events:none;z-index:60;
   box-shadow:var(--e3);max-width:min(420px,calc(100vw - 40px));text-align:center;line-height:1.45}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+/* 되돌리기처럼 누를 수 있는 토스트는 조금 넓게 — 글과 버튼이 한 줄에 서게 */
+/* left:50% 로 붙은 고정 요소는 '오른쪽 절반'만 쓸 수 있어 폭이 화면의 반으로 잘린다.
+   (translateX 는 배치 뒤에 걸리므로 폭 계산에는 영향이 없다) max-content 로 풀어준다. */
+#toast.wide{display:flex;align-items:center;gap:10px;text-align:left;padding:10px 10px 10px 16px;
+  border-radius:var(--r);width:max-content;max-width:min(360px,calc(100vw - 32px))}
+/* flex:1 을 주면 basis 가 0 이 돼서 토스트 폭이 글자 길이를 못 따라간다(한 단어씩 접힘) */
+#toast.wide>span{flex:1 1 auto;min-width:0}
+#toast .t-act{border:none;background:var(--bg);color:var(--ink);font-family:inherit;
+  font-size:var(--t-sm);font-weight:800;padding:7px 13px;border-radius:var(--r-full);
+  cursor:pointer;flex-shrink:0}
+#toast .t-act:active{opacity:.7}
 .banner{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);
   border-radius:var(--r);padding:13px 15px 13px 18px;margin-bottom:12px;box-shadow:var(--e1);
   position:relative;overflow:hidden}
@@ -870,7 +912,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20260918-robust';
+const APP_BUILD='20260921-daily';
 const KEY='claudeflow_v1';
 const BROKEN_KEY='claudeflow_broken';   // 읽지 못한 원본을 옮겨 두는 곳(복구용)
 const store={
@@ -1177,7 +1219,19 @@ function gauge(pct,color,opts={}){
   const mark=opts.mark!=null?`<div class="${opts.markCls||'gauge-marker'}" style="left:${Math.max(0,Math.min(100,opts.mark))}%"></div>`:'';
   return`<div class="${cls}" style="${opts.style||''}"><div class="${fcls}" style="width:${p}%${color?';background:'+color:''}"></div>${mark}</div>`;
 }
-function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2000)}
+function toast(m){const t=$('toast');t.textContent=m;t.classList.remove('wide');t.style.pointerEvents='none';
+  t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2000)}
+/* 기록하고 나서 무엇이 달라졌는지 바로 보여준다 — '저장했어요'만으로는
+   방금 한 일이 무슨 의미였는지 알 수 없다. 되돌리기도 여기서 바로 준다. */
+function toastAct(m,label,fn,ms=4200){
+  const t=$('toast'); if(!t)return toast(m);
+  t.innerHTML=`<span>${m}</span><button class="t-act" type="button">${esc(label)}</button>`;
+  t.classList.add('show','wide'); t.style.pointerEvents='auto';
+  const btn=t.querySelector('.t-act');
+  if(btn)btn.onclick=()=>{ t.classList.remove('show'); t.style.pointerEvents='none'; fn(); };
+  clearTimeout(t._t);
+  t._t=setTimeout(()=>{t.classList.remove('show');t.style.pointerEvents='none'},ms);
+}
 
 /* ═════════ 집계 ═════════ */
 let _mtCache={},_mtVer='';
@@ -1538,7 +1592,37 @@ function healthScore(ym){
   if(inc===0&&exp===0)flow=10;
   flow=clamp(flow);
   const parts={'소비':spend,'저축':saving,'투자':invest,'부채':debt,'현금흐름':flow};
-  return{total:Object.values(parts).reduce((a,b)=>a+b,0),parts};
+  /* 어떤 항목이 '실제 기록'으로 계산됐는지 함께 돌려준다.
+     기록이 없으면 위 식은 전부 '모름'의 중간값을 쓰고, 부채는 카드가 없다는 이유로
+     만점 20점을 준다 — 그대로 합치면 아무것도 안 한 사람이 56점을 받는다. */
+  const known={
+    '소비':inc>0||exp>0, '저축':inc>0,
+    '투자':invM>0||S.accounts.some(a=>a.type==='invest'),
+    '부채':S.cards.some(c=>c.type==='credit'),
+    '현금흐름':inc>0||exp>0||pv.inc>0||pv.exp>0,
+  };
+  return{total:Object.values(parts).reduce((a,b)=>a+b,0),parts,known,
+    ready:Object.values(known).filter(Boolean).length};
+}
+/* ── 점수를 보여줄 만큼 기록이 쌓였는가 ─────────────────────────────────
+ * 이 앱은 다른 곳에서 '없는 값을 지어내지 않는다'를 지킨다 — 입출금 계좌가 없으면
+ * 쓸 수 있는 돈을 계산하지 않고, 환율은 실제로 받아온 값만 관측으로 남기고,
+ * 발급일이 없으면 실적 면제를 가정하지 않는다. 점수만 예외였다.
+ * 기록이 모자라면 점수 대신 '무엇이 더 필요한지'를 말한다. */
+const SCORE_MIN_TX=10;
+function scoreReady(ym){
+  const n=S.tx.length, hs=healthScore(ym||thisYM());
+  return{ok:n>=SCORE_MIN_TX&&hs.ready>=3, n, need:SCORE_MIN_TX, hs};
+}
+/* 점수 자리에 쓰는 '준비 중' 표시 — 다음에 뭘 하면 되는지까지 적는다 */
+function scorePending(n,size=34){
+  const r=(size/2)-3, c=2*Math.PI*r, off=c*(1-Math.min(1,n/SCORE_MIN_TX));
+  return`<svg class="score-ring" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--fill-2)" stroke-width="4"/>
+    <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--line2)" stroke-width="4"
+      stroke-dasharray="${c}" stroke-dashoffset="${off}" stroke-linecap="round" transform="rotate(-90 ${size/2} ${size/2})"/>
+    <text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-size="${size*0.3}" font-weight="800" fill="var(--faint)">·</text>
+  </svg>`;
 }
 function scoreRing(score,size=34){
   const r=(size/2)-3, c=2*Math.PI*r, off=c*(1-score/100);
@@ -1806,9 +1890,13 @@ function renderHero(ym,inc,exp,bal){
   }
   $('h-inc').textContent='+'+fmtK(inc);
   $('h-exp').textContent='−'+fmtK(exp);
-  const hs=healthScore(ym);
-  $('h-score-chip').innerHTML=
-    scoreRing(hs.total)+`<div><div style="font-size:.68rem;color:var(--sub);font-weight:700">Health Score</div><div style="font-size:.78rem;font-weight:800">${hs.total>=80?'훌륭해요':hs.total>=55?'양호해요':'점검 필요'}</div></div>`;
+  // 기록이 모자라면 점수를 지어내지 않고, 몇 건이 더 필요한지 말한다
+  const sr=scoreReady(ym), chip=$('h-score-chip');
+  chip.classList.toggle('pending',!sr.ok);
+  chip.innerHTML = sr.ok
+    ? scoreRing(sr.hs.total)+`<div><div style="font-size:.68rem;color:var(--sub);font-weight:700">Health Score</div><div style="font-size:.78rem;font-weight:800">${sr.hs.total>=80?'훌륭해요':sr.hs.total>=55?'양호해요':'점검 필요'}</div></div>`
+    // 링 안에 숫자가 없으므로 글자를 지우면 빈 원만 남는다 — 좁은 화면에서도 남긴다
+    : scorePending(sr.n)+`<div class="sc-note"><div class="k">분석 준비 중</div><div class="v num">${sr.n}/${sr.need}건</div></div>`;
 }
 /* ② 해야 할 일 — 빈 슬롯을 세어 개수를 붙이고, 하나도 없으면 그렇게 말한다 */
 function refreshTodo(){
@@ -1907,7 +1995,12 @@ function forecastMonth(){
   // 남은 고정비: 아직 반영 안 된 이번 달 고정비
   const appliedIds=new Set(m.filter(t=>t.fixedId).map(t=>t.fixedId));
   const remainFixed=fixedOf('expense').filter(f=>fixedActiveOn(f,ym)&&!appliedIds.has(f.id)).reduce((s,f)=>s+f.amount,0);
-  return{spent,predicted:spent+pace*(dim-day)+remainFixed,day,dim};
+  /* 페이스는 '며칠치를 봤는가'에 통째로 달려 있다. 1일에 3만원 썼다고 달 전체를 90만원으로
+     보는 건 예측이 아니라 곱셈이다. 얼마나 믿을 만한지를 함께 돌려주고, 쓰는 쪽이 고르게 한다. */
+  const varN=m.filter(t=>!t.fixedId).length;
+  const conf=(day>=10&&varN>=8)?'높음':(day>=5&&varN>=4)?'보통':'데이터 부족';
+  return{spent,predicted:spent+pace*(dim-day)+remainFixed,day,dim,conf,n:varN,
+    ready:conf!=='데이터 부족'};
 }
 /* ═════════ 내역 탭 — 달력 + 목록 ═════════
  * 예전엔 '달력'과 '날짜별'이 따로였는데, 둘 다 같은 달의 같은 내역을 보여주면서
@@ -1978,11 +2071,41 @@ function openModal(html){$('sheet').innerHTML=html;$('modal').classList.add('ope
 function closeModal(){$('modal').classList.remove('open');document.body.style.overflow=''}
 const sheetHead=t=>`<div class="sheet-head"><h3>${t}</h3><button class="x" onclick="closeModal()">✕</button></div>`;
 
-/* ═════════ 거래 입력/수정 ═════════ */
-let txDraft={};
+/* ═════════ 거래 입력/수정 ═════════
+ * 매일 하는 일은 '금액과 가맹점을 적는 것' 하나다. 그런데 예전 배치는
+ * 유형 → 날짜/금액 → 카테고리 32칸 → 결제수단 → 메모 순서였다.
+ * 카테고리·결제수단을 자동으로 채워주는 건 **메모를 친 뒤**인데, 그 메모칸이
+ * 아이폰에서 943px 지점(화면 밖)에 있었다 — 자동화의 혜택을 받기 전에
+ * 이미 32칸 격자를 마주치는 구조였다.
+ * 이제 금액 → 가맹점 → 앱이 고른 결과(칩) 순으로 두고, 틀렸을 때만 펼친다. */
+let txDraft={}, txCatOpen=false, txMoreOpen=false, txFocusAmt=false;
+function txToggleCat(){ syncTxDraft(); txCatOpen=!txCatOpen; renderTxModal(); }
+function txToggleMore(){ syncTxDraft(); txMoreOpen=!txMoreOpen; renderTxModal(); }
+function txPickCat(n){ syncTxDraft(); txDraft.cat=n; txDraft.autoCat=false; txCatOpen=false; renderTxModal(); }
+/* 자주 쓰는 카테고리 몇 개 — 대부분은 32칸을 펼치지 않고 여기서 끝난다 */
+function recentCats(kind){
+  const list=kind==='income'?INC_CATS:EXP_CATS, cnt={};
+  S.tx.filter(t=>t.type===kind).slice(-200).forEach(t=>{cnt[t.cat]=(cnt[t.cat]||0)+1});
+  const top=Object.entries(cnt).sort((a,b)=>b[1]-a[1]).map(x=>x[0])
+    .filter(n=>list.some(c=>c[1]===n)).slice(0,6);
+  for(const[,n]of list){ if(top.length>=6)break; if(!top.includes(n))top.push(n) }
+  return top;
+}
+/* 접어둔 칸에 기본값이 아닌 값이 들어 있으면 접힌 줄에 그대로 적는다 — 조용히 숨기지 않는다 */
+function txMoreSummary(){
+  const d=txDraft, out=[];
+  if(d.date&&d.date!==todayStr())out.push(mdLabel(d.date));
+  if((d.months||1)>1)out.push(`${d.months}개월 할부`);
+  if(d.via==='simple')out.push('간편결제');
+  if(d.noPerf)out.push('실적 제외');
+  if(d.defended)out.push('계획된 지출');
+  return out.join(' · ');
+}
 function openTxModal(id){
+  txCatOpen=false; txMoreOpen=false; txFocusAmt=false;
   const t=id?S.tx.find(x=>x.id===id):null;
-  if(t){ txDraft={...t}; renderTxModal(); return; }
+  if(t){ txDraft={...t}; txMoreOpen=true; renderTxModal(); return; }   // 수정은 모든 칸을 보여준다
+  txFocusAmt=true;
   // 새 내역: 직전에 쓴 결제수단과 지금 시간대에 자주 쓰는 카테고리로 시작한다
   const lp=(S.settings||{}).lastPay||{};
   const alive=payAlive(lp.payKind,lp.payId);
@@ -2000,67 +2123,90 @@ function renderTxModal(){
       <button class="${d.type==='income'?'on':''}" onclick="syncTxDraft();txDraft.type='income';txDraft.payKind='account';txDraft.payId='';renderTxModal()">수입</button>
       <button class="${d.type==='transfer'?'on':''}" onclick="syncTxDraft();txDraft.type='transfer';renderTxModal()">이체</button>
     </div></div>`;
-  const dateAmt=`<div class="grid2">
-      <div class="field"><label>날짜</label><input type="date" id="tx-date" value="${d.date}"></div>
-      <div class="field"><label>금액 (원)</label><input type="text" inputmode="numeric" id="tx-amt" placeholder="0" value="${d.amount||''}" oninput="txPickHint()"></div>
+  const amtRow=`<div class="field"><label>금액 (원)</label>
+      <input type="text" inputmode="numeric" class="amt-big" id="tx-amt" placeholder="0"
+        value="${d.amount||''}" oninput="txPickHint()"></div>`;
+  const foot=`<div class="sheet-foot">
+      ${isEdit?`<button class="btn ghost" style="flex:1" onclick="delTx('${d.id}')">삭제</button>`:''}
+      <button class="btn primary" style="flex:2" onclick="saveTx()">${isEdit?'수정':'저장'}</button>
     </div>`;
   /* ── 이체 ── */
   if(d.type==='transfer'){
     const opts=sel=>S.accounts.map(a=>`<option value="${a.id}" ${sel===a.id?'selected':''}>${ACC_META[a.type].emo} ${esc(a.name)} · ${fmtCurK(a.balance,a.cur)}</option>`).join('');
     openModal(`${sheetHead(isEdit?'이체 수정':'내 계좌 간 이체')}
-      ${seg}${dateAmt}
+      ${seg}${amtRow}
       <div class="field"><label>보내는 계좌</label><select id="tx-from"><option value="">선택</option>${opts(d.fromId)}</select></div>
       <div class="field"><label>받는 계좌</label><select id="tx-to"><option value="">선택</option>${opts(d.toId)}</select></div>
-      <div class="field"><label>메모</label><input id="tx-memo" placeholder="예: 적금 월납입" value="${esc(d.memo)}"></div>
-      <div class="tiny" style="margin-bottom:12px">💡 이체는 잔액만 옮겨요 — 수입·지출 통계와 과소비 경고에는 잡히지 않습니다. 적금 납입도 이체로 기록하세요.</div>
-      <div style="display:flex;gap:8px;margin-top:6px">
-        ${isEdit?`<button class="btn ghost" style="flex:1" onclick="delTx('${d.id}')">삭제</button>`:''}
-        <button class="btn primary" style="flex:2" onclick="saveTx()">${isEdit?'수정':'저장'}</button>
-      </div>`);
+      <div class="grid2">
+        <div class="field"><label>날짜</label><input type="date" id="tx-date" value="${d.date}"></div>
+        <div class="field"><label>메모</label><input id="tx-memo" placeholder="예: 적금 월납입" value="${esc(d.memo)}"></div>
+      </div>
+      <div class="tiny">💡 이체는 잔액만 옮겨요 — 수입·지출 통계와 과소비 경고에는 잡히지 않습니다. 적금 납입도 이체로 기록하세요.</div>
+      ${foot}`);
+    txFocus();
     return;
   }
   const cats=d.type==='expense'?EXP_CATS:INC_CATS;
   if(!cats.some(c=>c[1]===d.cat))d.cat=cats[0][1];
-  let payOpts='';
-  if(d.type==='expense'){
-    payOpts=`<div class="field"><label>결제수단</label>
-      <select id="tx-pay" onchange="txDraft.autoPay=false;syncTxDraft();renderTxModal()">
+  const paySel=d.type==='expense'
+    ? `<select id="tx-pay" onchange="txDraft.autoPay=false;syncTxDraft();renderTxModal()">
         ${S.cards.map(c=>`<option value="card|${c.id}" ${d.payKind==='card'&&d.payId===c.id?'selected':''}>${esc(c.name)} (${c.type==='credit'?'신용':'체크'})</option>`).join('')}
         ${S.accounts.filter(a=>a.type==='checking').map(a=>`<option value="account|${a.id}" ${d.payKind==='account'&&d.payId===a.id?'selected':''}>${esc(a.name)} (계좌이체)</option>`).join('')}
         <option value="cash|" ${d.payKind==='cash'?'selected':''}>현금</option>
-      </select>
-      ${payHint()}<div id="tx-pick-hint"></div></div>${instFields()}`;
-  }else{
-    payOpts=`<div class="field"><label>입금 계좌</label>
-      <select id="tx-pay" onchange="syncTxDraft()">
+      </select>`
+    : `<select id="tx-pay" onchange="syncTxDraft()">
         ${S.accounts.filter(a=>a.type==='checking').map(a=>`<option value="account|${a.id}" ${d.payId===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}
         <option value="cash|" ${d.payKind==='cash'?'selected':''}>현금 / 미지정</option>
-      </select></div>`;
-  }
+      </select>`;
+  /* 카테고리는 앱이 이미 골라뒀다 — 무엇을 골랐는지 한 줄로 보여주고, 누를 때만 펼친다 */
+  const catBlock=`<div class="field"><label>카테고리</label>
+      <button type="button" class="pick-chip ${txCatOpen?'on':''}" onclick="txToggleCat()">
+        <span class="cv" id="tx-cat-chip">${CAT_EMO[d.cat]||'💸'} ${esc(d.cat)}</span>
+        <span class="ca">${txCatOpen?'접기 ▴':'바꾸기 ▾'}</span></button>
+      ${txCatOpen?`<div class="cat-recent">${recentCats(d.type).map(n=>
+          `<button type="button" class="btn ${d.cat===n?'primary':'ghost'} sm" onclick="txPickCat('${esc(n)}')">${CAT_EMO[n]||'💸'} ${esc(n)}</button>`).join('')}</div>
+        <div class="cat-grid" style="margin-top:9px">${cats.map(([e,n])=>
+          `<div class="cat-cell ${d.cat===n?'on':''}" onclick="txPickCat('${esc(n)}')"><div class="ce">${e}</div><div class="cl">${n}</div></div>`).join('')}</div>`:''}
+    </div>`;
+  const moreSum=txMoreSummary();
+  const more=`<div style="border-top:1px solid var(--line);margin-top:4px">
+      <button type="button" class="more-toggle" onclick="txToggleMore()">
+        <span>상세 설정 ${txMoreOpen?'▴':'▾'}</span>
+        <span class="mv">${txMoreOpen?'':esc(moreSum)}</span></button>
+      ${txMoreOpen?`
+        <div class="field"><label>날짜</label><input type="date" id="tx-date" value="${d.date}"></div>
+        ${d.type==='expense'?instFields():''}
+        ${d.type==='expense'?`<div class="field"><label class="cb-row"><input type="checkbox" id="tx-def" ${d.defended?'checked':''}><span>계획된 지출 (과소비 경고에서 제외)</span></label></div>`:''}
+        ${(isEdit&&d.type==='expense')?`<button class="btn ghost sm block" style="margin-bottom:10px" onclick="addQuickFromTx('${d.id}')">⚡ 빠른 입력에 추가</button>`:''}`:''}
+    </div>`;
   openModal(`${sheetHead(isEdit?'내역 수정':'내역 추가')}
-    ${seg}${dateAmt}
-    <div class="field"><label>카테고리</label><div class="cat-grid">
-      ${cats.map(([e,n])=>`<div class="cat-cell ${d.cat===n?'on':''}" onclick="syncTxDraft();txDraft.cat='${n}';txDraft.autoCat=false;renderTxModal()"><div class="ce">${e}</div><div class="cl">${n}</div></div>`).join('')}
-    </div></div>
-    ${payOpts}
-    <div class="field"><label>메모</label>
-      <input id="tx-memo" placeholder="예: 학식, 스터디카페" value="${esc(d.memo)}"
+    ${seg}${amtRow}
+    <div class="field"><label>${d.type==='expense'?'어디에 썼나요':'무엇인가요'}</label>
+      <input id="tx-memo" placeholder="${d.type==='expense'?'예: 스타벅스, 학식':'예: 월급, 용돈'}" value="${esc(d.memo)}"
         list="tx-memo-list" autocomplete="off" oninput="onMemoInput()">
       <datalist id="tx-memo-list">${merchantMemory().slice(0,40)
         .map(x=>`<option value="${esc(x.label)}">`).join('')}</datalist>
-      <div class="tiny" id="tx-memo-hint" style="margin-top:4px">${
+      <div class="tiny" id="tx-memo-hint" style="margin-top:5px">${
         d.autoCat&&d.catWhy?`💡 ${esc(d.catWhy)}로 시작했어요 — 바꾸면 그대로 기억해요`:''}</div></div>
-    ${d.type==='expense'?`<div class="field"><label class="cb-row"><input type="checkbox" id="tx-def" ${d.defended?'checked':''}><span>계획된 지출 (과소비 경고에서 제외)</span></label></div>`:''}
-    ${(isEdit&&d.type==='expense')?`<button class="btn ghost sm block" style="margin-bottom:8px" onclick="addQuickFromTx('${d.id}')">⚡ 빠른 입력에 추가</button>`:''}
-    <div style="display:flex;gap:8px;margin-top:6px">
-      ${isEdit?`<button class="btn ghost" style="flex:1" onclick="delTx('${d.id}')">삭제</button>`:''}
-      <button class="btn primary" style="flex:2" onclick="saveTx()">${isEdit?'수정':'저장'}</button>
-    </div>`);
+    ${catBlock}
+    <div class="field"><label>${d.type==='expense'?'결제수단':'입금 계좌'}</label>${paySel}
+      ${d.type==='expense'?`${payHint()}<div id="tx-pick-hint"></div>`:''}</div>
+    ${more}
+    ${foot}`);
   if(d.type==='expense'&&!isEdit&&!d.payId){
     const sel=$('tx-pay');
     if(sel&&sel.value){d.payKind=sel.value.split('|')[0];d.payId=sel.value.split('|')[1]||'';}
   }
   txPickHint();
+  txFocus();
+}
+/* 새 내역이면 금액칸에 커서를 두고 숫자 키보드를 띄운다. 다시 그릴 때마다 뺏지는 않는다.
+   (탭 제스처 안에서 부르므로 iOS 에서도 키보드가 뜰 가능성이 높다) */
+function txFocus(){
+  if(!txFocusAmt)return;
+  txFocusAmt=false;
+  const el=$('tx-amt'); if(!el)return;
+  try{ el.focus({preventScroll:true}); el.select(); }catch(e){ try{el.focus()}catch(_){} }
 }
 function instFields(){ // 할부(신용) + 실적 제외 토글(카드)
   const d=txDraft, c=d.payKind==='card'?cardById(d.payId||''):null;
@@ -2174,6 +2320,9 @@ function onMemoInput(){
   const filled=[];
   if(txDraft.autoCat!==false&&hit.cat&&hit.cat!==txDraft.cat){
     txDraft.cat=hit.cat;
+    // 격자는 접혀 있을 수 있다 — 접힌 상태에서 보이는 건 칩이므로 칩도 함께 고친다
+    const chip=$('tx-cat-chip');
+    if(chip)chip.innerHTML=`${CAT_EMO[hit.cat]||'💸'} ${esc(hit.cat)}`;
     document.querySelectorAll('#sheet .cat-cell').forEach(c=>
       c.classList.toggle('on',(c.textContent||'').trim().endsWith(hit.cat)));
     filled.push(`${CAT_EMO[hit.cat]||''} ${hit.cat}`);
@@ -2246,13 +2395,16 @@ function saveTx(){
     if(!d.fromId||!d.toId)return toast('보내는 계좌와 받는 계좌를 선택해주세요');
     if(d.fromId===d.toId)return toast('보내는 계좌와 받는 계좌가 같아요');
   }
+  let saved;
   if(d.id){
     const old=S.tx.find(x=>x.id===d.id);
+    lastTxUndo={kind:'edit',id:old.id,before:JSON.parse(JSON.stringify(old))};
     applyBalance(old,-1);                       // 원래 환율로 되돌리고
     const keepFx=old.fxAt||fxRate();
     const {autoCat,autoPay,catWhy,...clean}=d;  // 입력 보조용 임시 표시 제거
     Object.assign(old,{...clean,amount:amt,fxAt:keepFx});
     applyBalance(old,1);                        // 같은 환율로 다시 반영
+    saved=old;
   }else{
     const now=new Date();
     const t={...d,id:uid(),amount:amt,fxAt:fxRate()};
@@ -2260,12 +2412,56 @@ function saveTx(){
     // 시각을 남겨두면 '이 시간대에 뭘 쓰는지'를 다음부터 추천할 수 있다
     if(d.date===todayStr())t.at=`${pad(now.getHours())}:${pad(now.getMinutes())}`;
     S.tx.push(t);applyBalance(t,1);
+    lastTxUndo={kind:'add',id:t.id};
+    saved=t;
   }
   // 다음 입력은 이번에 쓴 결제수단으로 시작한다
   if(d.type==='expense'&&d.payKind){
     S.settings.lastPay={payKind:d.payKind,payId:d.payId||''};
   }
-  commit('저장했어요');
+  save(); closeModal(); renderAll();
+  toastAct(txFeedback(saved),'되돌리기',undoLastTx);
+}
+/* ── 기록하고 나면 무엇이 달라졌는가 ───────────────────────────────────
+ * '저장했어요'는 저장됐다는 것만 알려준다. 사용자가 알고 싶은 건 그게 아니라
+ * '그래서 지금 어떤 상태인가'다. 이미 계산해 둔 숫자 중 **확실한 것**만 고른다.
+ * (지난번보다 얼마 썼다 같은 비교는 표본이 하나면 잡음이라 쓰지 않는다) */
+function txFeedback(t){
+  if(!t)return '저장했어요';
+  if(t.type==='transfer')return `옮겼어요 · ${fmt(t.amount)}`;
+  if(t.type==='income')return `수입 ${fmt(t.amount)} 기록했어요`;
+  const ym=thisYM();
+  // ① 예산을 정해뒀으면 남은 돈이 가장 궁금하다
+  const b=budgetOf(ym);
+  if(b&&b.total>0){
+    const left=Math.round(b.total-totals(ym).exp);
+    return left>=0?`기록했어요 · 예산 ${fmtK(left)}원 남음`
+                  :`기록했어요 · 예산 ${fmtK(-left)}원 초과`;
+  }
+  // ② 실적 구간이 걸린 신용카드면 다음 구간까지 남은 금액
+  if(t.payKind==='card'){
+    const c=cardById(t.payId);
+    if(c&&c.type==='credit'&&(c.tiers||[]).length){
+      const cur=perfSpend(c,ym);
+      const next=(c.tiers||[]).map(x=>Array.isArray(x)?x[0]:x).filter(v=>v>cur).sort((a,b)=>a-b)[0];
+      if(next)return `기록했어요 · 실적까지 ${fmtK(next-cur)}원`;
+    }
+  }
+  // ③ 그 외에는 오늘 쓴 돈 — 늘 있고 늘 맞는 숫자다
+  const today=dayTx(todayStr()).filter(x=>x.type==='expense').reduce((s,x)=>s+x.amount,0);
+  return `기록했어요 · 오늘 ${fmt(today)} 썼어요`;
+}
+/* 방금 저장한 것 한 번만 되돌린다 — 잘못 눌렀을 때 내역 탭까지 찾아가지 않게 */
+let lastTxUndo=null;
+function undoLastTx(){
+  const u=lastTxUndo; lastTxUndo=null;
+  if(!u)return toast('되돌릴 것이 없어요');
+  const i=S.tx.findIndex(x=>x.id===u.id);
+  if(i<0)return toast('이미 지워진 내역이에요');
+  applyBalance(S.tx[i],-1);
+  if(u.kind==='add')S.tx.splice(i,1);
+  else{ S.tx[i]={...u.before}; applyBalance(S.tx[i],1); }
+  save(); renderAll(); toast('되돌렸어요');
 }
 function delTx(id){
   const t=S.tx.find(x=>x.id===id);if(!t)return;
@@ -3627,16 +3823,23 @@ function settleCard(id){
 let wizStep=0, wizDraft=null;
 const wizDone=()=>!!(S.settings&&S.settings.setupAt);
 /* 아직 안 했고, 쓸 만큼 데이터가 있을 때만 권한다 (빈 앱에 띄우면 할 일이 없다) */
+/* 시작 안내.
+ * 예전에는 계좌나 카드가 하나라도 있어야 이 배너가 떴는데, 마법사 1단계는 계좌가 없으면
+ * "자산 탭에서 먼저 추가해주세요"라고 돌려보냈다 — 서로를 막고 있었다. 그래서 아무것도
+ * 없는 사람은 배너를 보지 못한 채 자산 탭을 스스로 찾아가야 했다.
+ * 이제 빈 앱에서도 뜨고, 마법사 안에서 통장을 바로 만들 수 있다. */
 function renderSetupBanner(){
   const el=$('setup-banner'); if(!el)return;
-  const has=S.accounts.length||S.cards.length;
-  if(wizDone()||!has){ el.innerHTML=''; return; }
+  if(wizDone()){ el.innerHTML=''; return; }
+  const empty=!S.accounts.length&&!S.cards.length;
   /* 안 해도 그만인 상시 안내라 '할 일' 개수로는 세지 않는다 — 동기화 권유와 같은 이유로,
      영원히 "할 일 1"이 붙으면 배지가 의미를 잃는다 */
   el.dataset.nag='1';
   el.innerHTML=`<div class="banner" style="background:var(--blue-soft);border-color:var(--blue);border-left-color:var(--blue)">
-    <div class="b-main">👋 <b>쓰던 걸 그대로 옮겨올까요?</b><br>
-      <span class="tiny">남은 카드값·지난달 실적·진행 중인 할부만 넣으면 오늘부터 숫자가 맞아요 (3분)</span></div>
+    <div class="b-main">👋 <b>${empty?'60초면 시작할 수 있어요':'쓰던 걸 그대로 옮겨올까요?'}</b><br>
+      <span class="tiny">${empty
+        ? '통장 잔액만 넣으면 오늘부터 <b>쓸 수 있는 돈</b>이 계산돼요. 카드·할부는 건너뛰어도 됩니다'
+        : '남은 카드값·지난달 실적·진행 중인 할부만 넣으면 오늘부터 숫자가 맞아요 (3분)'}</span></div>
     <button class="btn dark sm" onclick="openWizard()">시작</button></div>`;
 }
 function dismissWizard(){
@@ -3687,6 +3890,17 @@ function wizSync(){
     });
   }
 }
+/* 마법사 안에서 통장 만들기 — 자산 탭으로 내보내지 않는다 */
+function wizAddAcc(){
+  wizSync();
+  const name=(val('wz-new-name')||'').trim();
+  const raw=numValStrict('wz-new-bal');
+  if(!name)return toast('통장 이름을 넣어주세요 (예: 하나 주거래)');
+  if(!Number.isFinite(raw))return toast('잔액을 숫자로 입력해주세요 (예: 310000)');
+  S.accounts.push({id:uid(),type:'checking',name,balance:Math.round(raw),cur:'KRW'});
+  _discInvalidate(); save(); renderWizard();
+  toast(`${name} 추가했어요`);
+}
 function wizAddInst(){
   wizSync();
   const c=wizDraft.cards[0];
@@ -3711,10 +3925,22 @@ function renderWizard(){
     `<span class="wz-dot ${i===wizStep?'on':(i<wizStep?'done':'')}" onclick="wizGo(${i})">${s}</span>`).join('');
   let body='';
   if(wizStep===0){
+    /* 계좌가 없다고 자산 탭으로 돌려보내지 않는다 — 여기서 바로 만든다.
+       돌려보내면 사용자는 앱의 값에 닿기 전에 구조부터 배워야 한다. */
     body=`<div class="tiny" style="margin-bottom:12px">은행 앱을 열어 <b>지금 잔액</b>을 그대로 적어주세요. 이 숫자가 '쓸 수 있는 돈'의 출발점이 됩니다.</div>
-      ${chk.length?chk.map(a=>`<div class="field"><label>${esc(a.name)}</label>
-        <input type="text" inputmode="numeric" id="wz-acc-${a.id}" value="${a.balance||''}" placeholder="0"></div>`).join('')
-        :`<div class="empty">입출금 계좌가 아직 없어요.<br>자산 탭에서 먼저 추가해주세요.</div>`}`;
+      ${chk.map(a=>`<div class="field"><label>${esc(a.name)}</label>
+        <input type="text" inputmode="numeric" id="wz-acc-${a.id}" value="${a.balance||''}" placeholder="0"></div>`).join('')}
+      <div class="card tight" style="margin-bottom:10px">
+        <div style="font-weight:700;font-size:.88rem;margin-bottom:8px">${chk.length?'통장 더 추가':'주로 쓰는 통장을 하나 넣어주세요'}</div>
+        <div class="grid2">
+          <div class="field" style="margin-bottom:0"><label>이름</label>
+            <input id="wz-new-name" placeholder="예: 하나 주거래" maxlength="30"></div>
+          <div class="field" style="margin-bottom:0"><label>지금 잔액</label>
+            <input type="text" inputmode="numeric" id="wz-new-bal" placeholder="0"></div>
+        </div>
+        <button class="btn soft sm block" style="margin-top:9px" onclick="wizAddAcc()">＋ 통장 추가</button>
+      </div>
+      ${chk.length?'':`<div class="tiny">카드·할부는 다음 단계에서 넣거나 건너뛸 수 있어요.</div>`}`;
   }else if(wizStep===1){
     body=`<div class="tiny" style="margin-bottom:12px">카드 앱 첫 화면에 있는 두 숫자예요. <b>결제 예정 금액</b>과 <b>지난달 이용금액</b>을 그대로 옮기면, 오늘 쓰는 것부터 혜택·결제 예정이 정확해집니다.</div>
       ${d.cards.length?d.cards.map(c=>`
@@ -4443,12 +4669,22 @@ function renderReport(){
     `<div class="rm-chip ${m===repYM?'on':''}" onclick="selectRepMonth('${m}')">${ymLabel(m)}${S.reports[m]?' ✓':''}</div>`).join('');
   const body=$('rep-body');
   const r=S.reports[repYM];
-  const hs=healthScore(repYM);
-  const scoreCard=`<div class="card">
-    <div class="row"><div style="font-weight:800">Financial Health Score</div>${scoreRing(hs.total,44)}</div>
-    <div class="score-detail">${Object.entries(hs.parts).map(([k,v])=>
-      `<div class="sd-row"><span class="k">${k}</span><span class="bar"><i style="width:${v/20*100}%;background:${v>=16?'var(--green)':v>=10?'var(--gold)':'var(--terra)'}"></i></span><span class="v num">${v}/20</span></div>`).join('')}
-    </div><div id="score-hist"></div></div>`;
+  const sr=scoreReady(repYM), hs=sr.hs;
+  /* 아직 판단할 수 없으면 점수 대신 '무엇이 모자란지'를 그 자리에 적는다.
+     항목별로도 실제 기록으로 계산된 것과 아닌 것을 구분해 보여준다. */
+  const scoreCard=sr.ok
+    ? `<div class="card">
+        <div class="row"><div style="font-weight:800">Financial Health Score</div>${scoreRing(hs.total,44)}</div>
+        <div class="score-detail">${Object.entries(hs.parts).map(([k,v])=>
+          `<div class="sd-row"><span class="k">${k}</span><span class="bar"><i style="width:${v/20*100}%;background:${v>=16?'var(--green)':v>=10?'var(--gold)':'var(--terra)'}"></i></span><span class="v num">${v}/20</span></div>`).join('')}
+        </div><div id="score-hist"></div></div>`
+    : `<div class="card">
+        <div class="row"><div style="font-weight:800">Financial Health Score</div>${scorePending(sr.n,44)}</div>
+        <div class="tiny" style="margin:8px 0 10px">아직 점수를 내지 않아요 — 기록이 적으면 어떤 숫자를 내도 근거가 없습니다.
+          <b>지출 ${Math.max(0,sr.need-sr.n)}건</b>을 더 기록하면 계산을 시작해요. (${sr.n}/${sr.need}건)</div>
+        <div class="score-detail">${Object.entries(hs.known).map(([k,v])=>
+          `<div class="sd-row"><span class="k">${k}</span><span class="bar"><i style="width:${v?'100':'0'}%;background:var(--line2)"></i></span><span class="v tiny">${v?'준비됨':'기록 없음'}</span></div>`).join('')}
+        </div></div>`;
   if(!r){
     const has=monthTx(repYM).length>0;
     body.innerHTML=scoreCard+`<div class="card" style="text-align:center;padding:28px 18px">
@@ -4577,7 +4813,8 @@ function aiProfile(ym){
   try{ const recv=debtSum('receivable'), pay=debtSum('payable');
     if(recv||pay)p.돈거래={받을돈:recv,갚을돈:pay}; }catch(e){}
   try{ const sp=spendProfile(); if(sp&&sp.traits)p.소비성향=sp.traits.map(x=>x.t); }catch(e){}
-  try{ const hs=healthScore(M); if(hs)p.건강점수={총점:hs.total,세부:hs.parts}; }catch(e){}
+  // 기록이 모자란 달의 점수는 넘기지 않는다 — 지어낸 숫자를 AI 가 근거로 삼으면 더 나쁘다
+  try{ const sr=scoreReady(M); if(sr.ok)p.건강점수={총점:sr.hs.total,세부:sr.hs.parts}; }catch(e){}
   const memo={};
   monthTx(M).filter(x=>x.type==='expense'&&x.memo).forEach(x=>{
     memo[x.memo]=memo[x.memo]||{건수:0,금액:0}; memo[x.memo].건수++; memo[x.memo].금액+=x.amount;});
@@ -5647,9 +5884,11 @@ function budgetPace(ym){
   const b=budgetOf(ym); if(!b||!b.total)return null;
   const day=(ym===thisYM())?new Date().getDate():daysIn(ym);
   const dim=daysIn(ym), {exp}=totals(ym);
-  const f=(ym===thisYM())?forecastMonth().predicted:exp;
+  const fc=(ym===thisYM())?forecastMonth():{predicted:exp,conf:'높음',ready:true};
+  const f=fc.predicted;
   const idealPace=b.total*day/dim; // 오늘까지 이상적 소비
   return{total:b.total,spent:exp,day,dim,predicted:Math.round(f),
+    conf:fc.conf, ready:fc.ready,        // 월초 며칠치로 월말을 단정하지 않기 위해
     pct:b.total>0?exp/b.total*100:0, pacePct:day/dim*100,
     over:f>b.total, gap:Math.round(f-b.total),
     dailyLeft:Math.max(0,Math.round((b.total-exp)/Math.max(1,dim-day))),
@@ -5666,9 +5905,12 @@ function renderBudget(){
   const p=budgetPace(ym);
   const cls=p.pct>=100?'over-fill':(p.over?'warn-fill':'');
   const col=p.pct>=100?'var(--terra-deep)':(p.over?'var(--gold)':'var(--green)');
+  /* 이미 초과한 건 사실이라 언제든 말할 수 있지만, '월말에 이렇게 될 것'은 예측이다.
+     며칠치뿐이면 곱셈에 가까우므로 예측 대신 지금까지 쓴 것만 말한다. */
   const verdict=p.pct>=100?`🔴 예산을 <b>${fmtK(p.spent-p.total)}원</b> 초과했어요.`
-    :p.over?`🟡 지금 속도면 월말 <b class="num">${fmtK(p.predicted)}원</b> — 예산을 <b>${fmtK(p.gap)}원</b> 넘겨요.`
-    :`🟢 지금 속도면 월말 <b class="num">${fmtK(p.predicted)}원</b> — 예산 안에 들어와요.`;
+    :!p.ready?`⚪ 지금까지 <b class="num">${fmtK(p.spent)}원</b> 썼어요 — 아직 ${p.day}일치라 월말 예상은 이르러요.`
+    :p.over?`🟡 지금 속도면 월말 <b class="num">${fmtK(p.predicted)}원</b> — 예산을 <b>${fmtK(p.gap)}원</b> 넘겨요. <span style="color:var(--faint)">(신뢰도 ${p.conf})</span>`
+    :`🟢 지금 속도면 월말 <b class="num">${fmtK(p.predicted)}원</b> — 예산 안에 들어와요. <span style="color:var(--faint)">(신뢰도 ${p.conf})</span>`;
   el.innerHTML=`
     <div class="row" style="margin-bottom:7px"><div style="font-weight:800;font-size:.9rem">🎯 이번 달 예산 <span class="badge gold">AI 페이스</span></div>
       <button class="btn ghost sm" onclick="openBudgetModal()">수정</button></div>
@@ -5799,7 +6041,7 @@ function briefStats(){
   const ym=thisYM(), pm=prevYM(ym);
   const pv=totals(pm), pv2=totals(prevYM(pm));
   const top=catSums(pm).slice(0,1)[0]||null;
-  const hs=healthScore(pm);
+  const srB=scoreReady(pm), hs=srB.ok?srB.hs:null;   // 판단할 수 없으면 점수를 말하지 않는다
   const saveRate=pv.inc>0?Math.round((pv.inc-pv.exp)/pv.inc*100):0;
   const expD=pv2.exp>0?(pv.exp-pv2.exp)/pv2.exp*100:null;
   return{ym,pm,pv,top,hs,saveRate,expD,recv:debtSum('receivable'),budget:budgetOf(ym)};
@@ -5818,7 +6060,7 @@ function renderBrief(){
       <div class="b-line"><span>💸</span><span>${ymLabel(st.pm)} 지출 <b class="num">${fmt(st.pv.exp)}</b>${st.expD!==null?` (전전달 대비 <b class="${st.expD<=0?'pos':'neg'}">${st.expD>=0?'+':''}${st.expD.toFixed(0)}%</b>)`:''}</span></div>
       <div class="b-line"><span>💰</span><span>수입 <b class="num">${fmt(st.pv.inc)}</b> · 저축률 <b>${st.saveRate}%</b></span></div>
       ${st.top?`<div class="b-line"><span>${CAT_EMO[st.top[0]]||'📊'}</span><span>가장 많이 쓴 곳은 <b>${st.top[0]}</b> (${fmtK(st.top[1])}원)</span></div>`:''}
-      <div class="b-line"><span>🏅</span><span>지난달 Health Score <b>${st.hs.total}점</b></span></div>
+      ${st.hs?`<div class="b-line"><span>🏅</span><span>지난달 Health Score <b>${st.hs.total}점</b></span></div>`:''}
       ${st.recv>0?`<div class="b-line"><span>🤝</span><span>아직 못 받은 돈 <b class="num">${fmtK(st.recv)}원</b>이 있어요</span></div>`:''}
       <div class="b-line"><span>🎯</span><span>${st.budget?`이번 달 예산 <b class="num">${fmtK(st.budget.total)}원</b> 설정됨`:'이번 달 예산을 아직 안 정했어요'}</span></div>
       <div style="display:flex;gap:8px;margin-top:12px">
@@ -6161,7 +6403,7 @@ function renderIncome(){
 function recordScore(){ // 지난달 점수를 확정 저장
   const pm=prevYM(thisYM());
   S.scores=S.scores||{};
-  if(!S.scores[pm]&&monthTx(pm).length>0){
+  if(!S.scores[pm]&&monthTx(pm).length>=SCORE_MIN_TX){
     const hs=healthScore(pm);
     S.scores[pm]={total:hs.total,parts:hs.parts};
     save();
@@ -6175,7 +6417,7 @@ function scoreHistory(n=6){
     const ym=`${d.getFullYear()}-${pad(d.getMonth()+1)}`;
     const saved=S.scores[ym];
     const live=(ym===thisYM())?healthScore(ym):null;
-    const has=monthTx(ym).length>0;
+    const has=monthTx(ym).length>=SCORE_MIN_TX;   // 몇 건뿐인 달을 추이에 찍으면 선이 거짓말을 한다
     out.push({ym,score:saved?saved.total:(live?live.total:null),has});
   }
   return out;
@@ -6899,11 +7141,11 @@ function runQuick(i){
   const q=quickList()[i]; if(!q)return;
   // 금액이 매번 다른 항목은 조용히 틀린 값으로 기록되면 안 되니 확인받는다
   if(q.fixed===false){
+    txCatOpen=false; txMoreOpen=false; txFocusAmt=true;
     txDraft={id:null,type:'expense',date:todayStr(),amount:String(q.amount),cat:q.cat,memo:q.memo||'',
       payKind:q.payKind||'cash',payId:q.payId||'',defended:false,months:1,noPerf:false,via:'',
       fromId:'',toId:'',autoCat:false,autoPay:false,catWhy:''};
-    renderTxModal();
-    const el=$('tx-amt'); if(el){el.focus();el.select();}
+    renderTxModal();     // 금액칸에 커서가 잡힌 채로 열린다(금액만 고쳐 저장)
     return;
   }
   const t={id:uid(),type:'expense',date:todayStr(),amount:q.amount,cat:q.cat,memo:q.memo||'',
@@ -6915,7 +7157,9 @@ function runQuick(i){
   t.at=`${pad(now.getHours())}:${pad(now.getMinutes())}`;
   S.tx.push(t); applyBalance(t,1);
   if(t.payKind)S.settings.lastPay={payKind:t.payKind,payId:t.payId||''};
-  save(); renderAll(); toast(`${q.memo||q.cat} ${fmt(q.amount)} 기록했어요`);
+  lastTxUndo={kind:'add',id:t.id};
+  save(); renderAll();
+  toastAct(`${q.memo||q.cat} ${fmt(q.amount)} · ${txFeedback(t).replace(/^기록했어요 · /,'')}`,'되돌리기',undoLastTx);
 }
 function addQuickFromTx(id){
   const t=S.tx.find(x=>x.id===id); if(!t||t.type!=='expense')return toast('지출 내역만 추가할 수 있어요');

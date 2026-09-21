@@ -27,9 +27,15 @@ ok('  비슷한 것끼리 인접 배치', r.names.indexOf('배달')===r.names.in
 // ② 거래 입력 화면 카테고리 선택지에 나오는지
 r = await p.evaluate(() => {
   openTxModal(); txDraft.type='expense'; renderTxModal();
-  const html=$('sheet').innerHTML; closeModal(); return html;
+  // 격자는 접혀 있는 게 기본 — 매일 쓰는 칸이 32칸에 밀리지 않게
+  const collapsed = document.querySelectorAll('#sheet .cat-cell').length;
+  txToggleCat();                       // '바꾸기'를 누른 상태
+  const html=$('sheet').innerHTML, cells=document.querySelectorAll('#sheet .cat-cell').length;
+  closeModal(); return {html, collapsed, cells};
 });
-ok('지출 입력 화면에 노출', /데이트/.test(r) && /골프/.test(r) && /편의점/.test(r));
+ok('카테고리 격자는 기본으로 접혀 있음', r.collapsed===0, `${r.collapsed}칸`);
+ok('  한 번 누르면 32칸이 전부 나옴', r.cells===32, `${r.cells}칸`);
+ok('지출 입력 화면에 노출', /데이트/.test(r.html) && /골프/.test(r.html) && /편의점/.test(r.html));
 
 // ③ 이미 카테고리를 손댄 사용자에게도 한 번은 들어가는지 (migrateCats)
 r = await p.evaluate(() => {

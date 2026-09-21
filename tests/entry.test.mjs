@@ -40,11 +40,12 @@ r = await p.evaluate(async () => {
   $('tx-memo').value='스타벅스'; onMemoInput();
   return {before, after:{cat:txDraft.cat, pay:txDraft.payId},
     sel:$('tx-pay').value, hint:$('tx-memo-hint').textContent,
-    onCell:[...document.querySelectorAll('#sheet .cat-cell.on')].map(c=>c.textContent.trim())};
+    chip:($('tx-cat-chip')||{}).textContent||''};
 });
 ok('메모 입력 → 카테고리 자동 선택', r.after.cat==='카페/간식', `${r.before.cat} → ${r.after.cat}`);
 ok('  결제수단도 자동 선택', r.after.pay==='c2' && r.sel==='card|c2', r.sel);
-ok('  화면의 카테고리 칸도 함께 갱신', r.onCell.some(t=>t.includes('카페/간식')), r.onCell.join(','));
+// 격자는 접혀 있으므로 사용자 눈에 보이는 건 칩이다 — 그게 같이 바뀌어야 한다
+ok('  화면의 카테고리 칩도 함께 갱신', r.chip.includes('카페/간식'), r.chip.trim());
 ok('  무엇이 채워졌는지 알려줌', /자동 선택/.test(r.hint), r.hint.slice(0,50));
 ok('  지난번 금액도 힌트로', /지난번/.test(r.hint));
 

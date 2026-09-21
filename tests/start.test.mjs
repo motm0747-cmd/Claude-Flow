@@ -5,7 +5,12 @@
    ④ 할부는 혜택 대상에서 빠지되 실적에는 들어가는지 */
 import { chromium, APP, BASE } from './lib/env.mjs';
 const b = await chromium.launch();
-const p = await b.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+/* 시계를 박아둔다 — 카드 결제일(20일)이 급여일(28일) 전에 오는 날이어야 개시 스냅샷이
+   '쓸 수 있는 돈'에 반영되는지 볼 수 있다. '오늘'을 그대로 쓰면 21일 이후엔 결제일이
+   이미 지나 이 판정이 달력에 따라 무너진다. */
+const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, timezoneId: 'Asia/Seoul' });
+const p = await ctx.newPage();
+await p.clock.install({ time: new Date('2026-09-10T10:00:00+09:00') });
 const errs = [];
 p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message));
 p.on('console', m => { const t = m.text(); if (m.type()==='error' && !/net::ERR|Failed to load resource|supabase/i.test(t)) errs.push(t); });
@@ -85,7 +90,7 @@ ok('  전액(120만)이 미결제로 잡히지 않음', r.cardPend===100000, `${
 
 // 화면에서 '이미 낸 회차'를 실제로 고를 수 있는가
 await seed();
-await p.evaluate(() => { openTxModal(); txDraft.payKind='card'; txDraft.payId='c1'; txDraft.amount=1200000; renderTxModal(); });
+await p.evaluate(() => { openTxModal(); txDraft.payKind='card'; txDraft.payId='c1'; txDraft.amount=1200000; txMoreOpen=true; renderTxModal(); });
 await p.waitForTimeout(250);
 await p.selectOption('#tx-months', '12');
 await p.waitForTimeout(250);
