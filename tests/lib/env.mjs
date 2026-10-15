@@ -20,20 +20,37 @@ function resolveModule(name, fallbacks) {
   throw new Error(
     `${name} 를 찾지 못했습니다. npm i -D ${name} 하거나 경로를 lib/env.mjs 에 추가하세요.`);
 }
+const asUrl = (p) => (p.startsWith('file:') ? p : `file://${p}`);
 
+/* ── playwright 불러오기 ──────────────────────────────────────────────
+ * require.resolve 는 환경에 따라 CJS 진입점(index.js)을 준다. 그걸 import 하면
+ * 노드가 이름 있는 export 를 찾아내지 못해 **chromium 이 조용히 undefined** 가 되고,
+ * 테스트는 `Cannot read properties of undefined (reading 'launch')` 로 전부 죽는다.
+ * (실제로 컨테이너가 바뀌자 26개 묶음이 한꺼번에 '실행 실패' 가 됐다.)
+ * 그래서 .mjs 짝을 먼저 보고, 없으면 default 에서 꺼내고, 그래도 없으면
+ * 무엇이 잘못됐는지 말하고 멈춘다 — undefined 를 들고 더 가지 않는다. */
 const pwPath = resolveModule('playwright', [
+  '/opt/node-tools/node_modules/playwright/index.mjs',
   '/opt/node22/lib/node_modules/playwright/index.mjs',
   '/usr/lib/node_modules/playwright/index.mjs',
 ]);
-export const { chromium } = await import(pwPath.startsWith('file:') ? pwPath : `file://${pwPath}`);
+const pwMjs = pwPath.replace(/index\.js$/, 'index.mjs');
+const pwMod = await import(asUrl(pwMjs !== pwPath && fs.existsSync(pwMjs) ? pwMjs : pwPath));
+export const chromium = pwMod.chromium || (pwMod.default && pwMod.default.chromium);
+if (!chromium || typeof chromium.launch !== 'function') {
+  throw new Error(`playwright 를 불러왔지만 chromium 이 없습니다 (${pwPath}). `
+    + `export: ${Object.keys(pwMod).join(',') || '(없음)'}`);
+}
 
 /* digest 엣지 함수는 TypeScript 라, 타입만 지워서 불러오려고 쓴다 */
 export async function loadTypeScript() {
   const p = resolveModule('typescript', [
+    '/opt/node-tools/node_modules/typescript/lib/typescript.js',
     '/opt/node22/lib/node_modules/typescript/lib/typescript.js',
     '/usr/lib/node_modules/typescript/lib/typescript.js',
   ]);
-  return (await import(p.startsWith('file:') ? p : `file://${p}`)).default;
+  const m = await import(asUrl(p));
+  return m.default || m;
 }
 
 /* 생성 파일(타입 지운 .mjs 등)을 둘 곳 — 저장소를 더럽히지 않는다 */

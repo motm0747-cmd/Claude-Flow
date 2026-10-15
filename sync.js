@@ -40,7 +40,7 @@
   var ID_LISTS = ['tx', 'accounts', 'cards', 'fixed', 'goals', 'debts', 'invLogs',
                   'wish', 'quick', 'recon', 'askLog'];
   // 키(YYYY-MM 등)로 찾는 맵들
-  var KEY_MAPS = ['reports', 'briefs', 'budgets', 'netHist', 'scores'];
+  var KEY_MAPS = ['reports', 'briefs', 'budgets', 'netHist', 'scores', 'autoLog'];
 
   var eq = function (a, b) { return JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b); };
   var byId = function (arr) {
