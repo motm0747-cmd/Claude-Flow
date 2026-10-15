@@ -369,6 +369,8 @@ textarea{resize:vertical;min-height:72px;line-height:1.6}
   font-size:var(--t-md);font-weight:600;color:var(--sub);cursor:pointer;
   transition:background .18s var(--ease),color .18s,box-shadow .18s}
 .seg button.on{background:var(--surface);color:var(--ink);box-shadow:var(--e1)}
+/* 네 칸이 되면 좁은 화면에서 글자가 눌린다 — 조금씩만 줄인다 */
+.seg4 button{padding:9px 2px;font-size:var(--t-sm);white-space:nowrap}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .grid2>*{min-width:0}
 input[type=date]{max-width:100%}
@@ -912,7 +914,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20261015-catchup';
+const APP_BUILD='20261015-refund';
 const KEY='claudeflow_v1';
 const BROKEN_KEY='claudeflow_broken';   // 읽지 못한 원본을 옮겨 두는 곳(복구용)
 const store={
@@ -1101,7 +1103,6 @@ function checkAmt(v,label){
   if(v>AMT_MAX){toast('금액이 너무 커요 (10억 초과) — 오타를 확인해주세요');return false}
   return true;
 }
-
 /* ═════════ 상수 ═════════ */
 // 기본 카테고리 (사용자가 추가/수정한 건 S.cats 에 저장 — 아래 EXP_CATS/INC_CATS 는 둘을 합친 결과)
 // 비슷한 것끼리 붙여 둔다 — 목록이 길어져도 고를 때 눈이 헤매지 않게.
@@ -1262,6 +1263,15 @@ function catSums(ym,type='expense'){
   monthTx(ym).filter(t=>t.type===type).forEach(t=>map[t.cat]=(map[t.cat]||0)+t.amount);
   return Object.entries(map).sort((a,b)=>b[1]-a[1]);
 }
+/* ── 환불 ─────────────────────────────────────────────────────────────
+ * 환불은 '마이너스 지출' 로 저장한다. 따로 유형을 만들면 지출을 더하는 곳
+ * (카테고리 합계·전월 실적·카드 미결제·잔액·예산·일평균·혜택)마다 손대야 하고,
+ * 한 군데만 빠뜨려도 숫자가 조용히 틀어진다. 같은 계산을 그대로 타게 두면
+ * 뺄 곳을 빠뜨릴 수가 없다.
+ * 대신 '학습' 하는 곳에서는 빼야 한다 — 환불을 가맹점 기억·빠른 입력·이상지출
+ * 기준으로 삼으면 다음 입력이 엉뚱해진다. */
+const isRefund=t=>!!t&&t.type==='expense'&&+t.amount<0;
+const realSpend=t=>!!t&&t.type==='expense'&&+t.amount>0;   // 학습·통계 기준이 되는 '진짜 지출'
 function dailyAvg30(){ // 최근 30일(오늘 제외) 일평균 지출 — 고정비·방어 지출 제외
   const t=new Date();let sum=0;
   for(let i=1;i<=30;i++){
@@ -1269,7 +1279,8 @@ function dailyAvg30(){ // 최근 30일(오늘 제외) 일평균 지출 — 고�
     const ds=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
     dayTx(ds).forEach(x=>{if(x.type==='expense'&&!x.fixedId&&!x.defended)sum+=x.amount});
   }
-  return sum/30;
+  // 환불이 섞이면 합이 음수가 될 수 있다 — 음수 평균으로는 과소비 판정이 뒤집힌다
+  return Math.max(0,sum/30);
 }
 function todaySpend(includeDefended=true){
   return dayTx(todayStr()).filter(t=>t.type==='expense'&&!t.fixedId&&(includeDefended||!t.defended)).reduce((s,t)=>s+t.amount,0);
@@ -1396,7 +1407,10 @@ function perkMerchants(p){
    카드마다 다를 수 있어 카드 단위 설정으로 두고, 기본값은 '제외'다. */
 const instExcluded=(card,t)=>!!(card&&card.noInstPerk!==false&&(t.months||1)>1);
 function perkMatch(p,t,card){
-  if((t.amount||0)<(p.minAmt||0))return false;
+  /* 환불은 마이너스 금액으로 저장돼 있다. `t.amount < minAmt` 로 비교하면 환불이
+     언제나 걸러져 **환불했는데 적립은 그대로** 남는다. 크기로 따지고 부호는
+     합계에서 처리하게 둔다 — 그래야 돌려받은 만큼 적립도 되돌아간다. */
+  if(Math.abs(+t.amount||0)<(p.minAmt||0))return false;
   if(instExcluded(card,t))return false;                       // 할부는 혜택 대상 아님
   if(p.via==='simple'&&(t.via||'')!=='simple')return false;   // 간편결제 전용 혜택
   if(p.via==='normal'&&(t.via||'')==='simple')return false;   // 간편결제는 다른 혜택이 가져간다
@@ -1960,15 +1974,18 @@ function txRow(t){
       <div class="t-amt num" style="color:var(--blue)">⇄ ${fmt(t.amount)}</div>
     </div>`;
   }
-  const sign=t.type==='income'?'+':'−';
-  const cls=t.type==='income'?'pos':'';
+  /* 환불은 마이너스로 저장돼 있다 — 그대로 찍으면 `−-30,000` 이 된다.
+     돌려받은 돈이므로 수입처럼 +로 보이되, 수입과 헷갈리지 않게 표시를 단다. */
+  const rf=isRefund(t);
+  const sign=(t.type==='income'||rf)?'+':'−';
+  const cls=(t.type==='income'||rf)?'pos':'';
   return`<div class="tx" onclick="openTxModal('${t.id}')">
-    <div class="emo">${CAT_EMO[t.cat]||'💸'}</div>
+    <div class="emo">${rf?'↩️':(CAT_EMO[t.cat]||'💸')}</div>
     <div class="t-main">
-      <div class="t-name">${esc(t.memo||t.cat)} ${t.defended?'<span class="badge green" style="font-size:.6rem;padding:1px 6px">방어</span>':''}${t.fixedId?'<span class="badge gray" style="font-size:.6rem;padding:1px 6px">고정</span>':''}</div>
+      <div class="t-name">${esc(t.memo||t.cat)} ${rf?'<span class="badge green" style="font-size:.6rem;padding:1px 6px">환불</span>':''}${t.defended?'<span class="badge green" style="font-size:.6rem;padding:1px 6px">방어</span>':''}${t.fixedId?'<span class="badge gray" style="font-size:.6rem;padding:1px 6px">고정</span>':''}</div>
       <div class="t-sub">${t.date.slice(5).replace('-','/')} · ${t.cat} · ${payLabel(t)}${(t.months||1)>1?` · ${t.months}개월 할부`:''}</div>
     </div>
-    <div class="t-amt num ${cls}">${sign}${fmt(t.amount)}</div>
+    <div class="t-amt num ${cls}">${sign}${fmt(Math.abs(t.amount))}</div>
   </div>`;
 }
 
@@ -2059,7 +2076,7 @@ function renderCal(){
   $('cal-grid').innerHTML=html;
   const t=totals(calYM);
   $('cal-summary').innerHTML=
-    `<span>수입 <b class="pos">+${fmtK(t.inc)}원</b></span><span>지출 <b class="neg">−${fmtK(t.exp)}원</b></span><span>수지 <b class="${t.bal>=0?'pos':'neg'}">${t.bal>=0?'+':'−'}${fmtK(Math.abs(t.bal))}원</b></span>`;
+    `<span>수입 <b class="pos">+${fmtK(t.inc)}원</b></span><span>지출 <b class="${t.exp>=0?'neg':'pos'}">${t.exp>=0?'−':'+'}${fmtK(Math.abs(t.exp))}원</b></span><span>수지 <b class="${t.bal>=0?'pos':'neg'}">${t.bal>=0?'+':'−'}${fmtK(Math.abs(t.bal))}원</b></span>`;
   ['','expense','income'].forEach(f=>{
     const el=$('lf-'+(f||'all')); if(el)el.classList.toggle('on',lstFilter===f);
   });
@@ -2121,7 +2138,9 @@ function txMoreSummary(){
 function openTxModal(id){
   txCatOpen=false; txMoreOpen=false; txFocusAmt=false;
   const t=id?S.tx.find(x=>x.id===id):null;
-  if(t){ txDraft={...t}; txMoreOpen=true; renderTxModal(); return; }   // 수정은 모든 칸을 보여준다
+  if(t){ // 수정은 모든 칸을 보여준다. 환불은 마이너스로 저장돼 있으니 입력칸에는 양수로 돌려준다
+    txDraft={...t, refund:isRefund(t), amount:isRefund(t)?Math.abs(+t.amount):t.amount};
+    txMoreOpen=true; renderTxModal(); return; }
   txFocusAmt=true;
   // 새 내역: 직전에 쓴 결제수단과 지금 시간대에 자주 쓰는 카테고리로 시작한다
   const lp=(S.settings||{}).lastPay||{};
@@ -2129,18 +2148,23 @@ function openTxModal(id){
   const sg=suggestCat();
   txDraft={id:null,type:'expense',date:todayStr(),amount:'',cat:sg.cat,memo:'',
     payKind:alive?lp.payKind:'card',payId:alive?(lp.payId||''):'',
-    defended:false,months:1,noPerf:false,via:'',fromId:'',toId:'',
+    defended:false,months:1,noPerf:false,via:'',fromId:'',toId:'',refund:false,
     autoCat:true,autoPay:true,catWhy:sg.why};   // auto* = 아직 사용자가 직접 안 고른 상태
   renderTxModal();
 }
 function renderTxModal(){
-  const d=txDraft, isEdit=!!d.id;
-  const seg=`<div class="field"><div class="seg">
-      <button class="${d.type==='expense'?'on':''}" onclick="syncTxDraft();txDraft.type='expense';txDraft.payKind='card';txDraft.payId='';renderTxModal()">지출</button>
-      <button class="${d.type==='income'?'on':''}" onclick="syncTxDraft();txDraft.type='income';txDraft.payKind='account';txDraft.payId='';renderTxModal()">수입</button>
-      <button class="${d.type==='transfer'?'on':''}" onclick="syncTxDraft();txDraft.type='transfer';renderTxModal()">이체</button>
+  const d=txDraft, isEdit=!!d.id, rf=!!d.refund;
+  /* 환불은 유형이 아니라 '지출의 부호' 다(저장은 마이너스 지출). 그래도 고를 때는
+     네 번째 칸으로 두는 게 맞다 — 숨겨 두면 쓸 수 있다는 걸 알 길이 없다. */
+  const segBtn=(t,label,on,extra='')=>
+    `<button class="${on?'on':''}" onclick="syncTxDraft();txDraft.refund=${t==='refund'};${extra}renderTxModal()">${label}</button>`;
+  const seg=`<div class="field"><div class="seg seg4">
+      ${segBtn('expense','지출',d.type==='expense'&&!rf,"txDraft.type='expense';if(!txDraft.payId){txDraft.payKind='card';txDraft.payId=''}")}
+      ${segBtn('refund','환불',rf,"txDraft.type='expense';")}
+      ${segBtn('income','수입',d.type==='income',"txDraft.type='income';txDraft.payKind='account';txDraft.payId='';")}
+      ${segBtn('transfer','이체',d.type==='transfer',"txDraft.type='transfer';")}
     </div></div>`;
-  const amtRow=`<div class="field"><label>금액 (원)</label>
+  const amtRow=`<div class="field"><label>${rf?'돌려받은 금액 (원)':'금액 (원)'}</label>
       <input type="text" inputmode="numeric" class="amt-big" id="tx-amt" placeholder="0"
         value="${d.amount||''}" oninput="txPickHint()"></div>`;
   const foot=`<div class="sheet-foot">
@@ -2192,22 +2216,25 @@ function renderTxModal(){
         <span class="mv">${txMoreOpen?'':esc(moreSum)}</span></button>
       ${txMoreOpen?`
         <div class="field"><label>날짜</label><input type="date" id="tx-date" value="${d.date}"></div>
-        ${d.type==='expense'?instFields():''}
-        ${d.type==='expense'?`<div class="field"><label class="cb-row"><input type="checkbox" id="tx-def" ${d.defended?'checked':''}><span>계획된 지출 (과소비 경고에서 제외)</span></label></div>`:''}
-        ${(isEdit&&d.type==='expense')?`<button class="btn ghost sm block" style="margin-bottom:10px" onclick="addQuickFromTx('${d.id}')">⚡ 빠른 입력에 추가</button>`:''}`:''}
+        ${(d.type==='expense'&&!rf)?instFields():''}
+        ${(d.type==='expense'&&!rf)?`<div class="field"><label class="cb-row"><input type="checkbox" id="tx-def" ${d.defended?'checked':''}><span>계획된 지출 (과소비 경고에서 제외)</span></label></div>`:''}
+        ${(isEdit&&d.type==='expense'&&!rf)?`<button class="btn ghost sm block" style="margin-bottom:10px" onclick="addQuickFromTx('${d.id}')">⚡ 빠른 입력에 추가</button>`:''}`:''}
     </div>`;
-  openModal(`${sheetHead(isEdit?'내역 수정':'내역 추가')}
-    ${seg}${amtRow}
-    <div class="field"><label>${d.type==='expense'?'어디에 썼나요':'무엇인가요'}</label>
-      <input id="tx-memo" placeholder="${d.type==='expense'?'예: 스타벅스, 학식':'예: 월급, 용돈'}" value="${esc(d.memo)}"
+  openModal(`${sheetHead(isEdit?(rf?'환불 수정':'내역 수정'):(rf?'환불 기록':'내역 추가'))}
+    ${seg}
+    ${rf?`<div class="tiny" style="margin:-4px 2px 12px">돌려받은 금액만큼 <b>그 카테고리 지출·카드 실적·결제 예정</b>에서 빠져요. 원래 결제한 수단을 그대로 고르면 됩니다.</div>`:''}
+    ${amtRow}
+    <div class="field"><label>${rf?'무엇을 환불받았나요':(d.type==='expense'?'어디에 썼나요':'무엇인가요')}</label>
+      <input id="tx-memo" placeholder="${rf?'예: 운동화 반품':(d.type==='expense'?'예: 스타벅스, 학식':'예: 월급, 용돈')}" value="${esc(d.memo)}"
         list="tx-memo-list" autocomplete="off" oninput="onMemoInput()">
       <datalist id="tx-memo-list">${merchantMemory().slice(0,40)
         .map(x=>`<option value="${esc(x.label)}">`).join('')}</datalist>
       <div class="tiny" id="tx-memo-hint" style="margin-top:5px">${
         d.autoCat&&d.catWhy?`💡 ${esc(d.catWhy)}로 시작했어요 — 바꾸면 그대로 기억해요`:''}</div></div>
     ${catBlock}
-    <div class="field"><label>${d.type==='expense'?'결제수단':'입금 계좌'}</label>${paySel}
-      ${d.type==='expense'?`${payHint()}<div id="tx-pick-hint"></div>`:''}</div>
+    <div class="field"><label>${d.type==='expense'?(rf?'돌려받은 수단':'결제수단'):'입금 계좌'}</label>${paySel}
+      ${(d.type==='expense'&&!rf)?`${payHint()}<div id="tx-pick-hint"></div>`:''}</div>
+    ${(isEdit&&d.type==='expense'&&!rf)?`<button class="btn soft sm block" style="margin-bottom:10px" onclick="refundOf('${d.id}')">↩️ 이 내역 환불받음</button>`:''}
     ${more}
     ${foot}`);
   if(d.type==='expense'&&!isEdit&&!d.payId){
@@ -2279,7 +2306,7 @@ function merchantMemory(){
   if(_mmVer===v&&_mmCache)return _mmCache;
   const m=new Map();
   // 최근 것에 더 무게를 준다 (예전에 쓰던 카드로 되돌아가지 않게)
-  S.tx.filter(t=>t.type==='expense'&&(t.memo||'').trim()).slice(-400).forEach((t,i,arr)=>{
+  S.tx.filter(t=>realSpend(t)&&(t.memo||'').trim()).slice(-400).forEach((t,i,arr)=>{
     const key=_pnorm(t.memo), w=1+i/arr.length;     // 뒤로 갈수록 가중치 ↑
     let e=m.get(key);
     if(!e){e={key,label:t.memo.trim(),cats:{},pays:{},amounts:[],n:0};m.set(key,e)}
@@ -2313,7 +2340,7 @@ function payAlive(kind,id){
 const HOUR_BUCKET=h=>h<5?'밤':h<11?'아침':h<15?'점심':h<18?'오후':h<22?'저녁':'밤';
 function suggestCat(){
   const now=new Date(), b=HOUR_BUCKET(now.getHours());
-  const recent=S.tx.filter(t=>t.type==='expense').slice(-300);
+  const recent=S.tx.filter(t=>realSpend(t)).slice(-300);
   const cnt={}, cntAll={};
   recent.forEach(t=>{
     cntAll[t.cat]=(cntAll[t.cat]||0)+1;
@@ -2385,6 +2412,7 @@ function syncTxDraft(){
 function clearCardOnly(){
   const d=txDraft;
   if(d.type==='transfer')return;
+  if(d.refund){ d.months=1; d.paidPortions=0; return; }   // 환불은 할부로 쪼개지 않는다
   if(d.payKind==='card'){
     const c=cardById(d.payId||'');
     if(!c)return;                                  // 카드가 지워진 옛 기록 — 여기서 더 건드리지 않는다
@@ -2423,9 +2451,13 @@ function applyBalance(t,sign){
 }
 function saveTx(){
   syncTxDraft();
-  const d=txDraft, amt=Math.round(numOf(d.amount));
+  const d=txDraft;
+  const typed=Math.round(numOf(d.amount));
   if(!d.date)return toast('날짜를 확인해주세요');
-  if(!checkAmt(amt))return;
+  if(!checkAmt(typed,d.refund?'돌려받은 금액':'금액'))return;
+  /* 환불은 마이너스 지출로 저장한다 — 입력은 양수로 받고 여기서 부호를 뒤집는다.
+     그래야 카테고리 합계·전월 실적·카드 미결제·잔액이 전부 같은 계산으로 깎인다. */
+  const amt=d.refund?-typed:typed;
   if(d.type==='transfer'){
     if(!d.fromId||!d.toId)return toast('보내는 계좌와 받는 계좌를 선택해주세요');
     if(d.fromId===d.toId)return toast('보내는 계좌와 받는 계좌가 같아요');
@@ -2436,14 +2468,14 @@ function saveTx(){
     lastTxUndo={kind:'edit',id:old.id,before:JSON.parse(JSON.stringify(old))};
     applyBalance(old,-1);                       // 원래 환율로 되돌리고
     const keepFx=old.fxAt||fxRate();
-    const {autoCat,autoPay,catWhy,...clean}=d;  // 입력 보조용 임시 표시 제거
+    const {autoCat,autoPay,catWhy,refund,...clean}=d;  // 입력 보조용 임시 표시 제거
     Object.assign(old,{...clean,amount:amt,fxAt:keepFx});
     applyBalance(old,1);                        // 같은 환율로 다시 반영
     saved=old;
   }else{
     const now=new Date();
     const t={...d,id:uid(),amount:amt,fxAt:fxRate()};
-    delete t.autoCat; delete t.autoPay; delete t.catWhy;   // 입력 보조용 임시 표시는 저장하지 않는다
+    delete t.autoCat; delete t.autoPay; delete t.catWhy; delete t.refund;   // 입력 보조용 임시 표시는 저장하지 않는다
     // 시각을 남겨두면 '이 시간대에 뭘 쓰는지'를 다음부터 추천할 수 있다
     if(d.date===todayStr())t.at=`${pad(now.getHours())}:${pad(now.getMinutes())}`;
     S.tx.push(t);applyBalance(t,1);
@@ -2466,6 +2498,13 @@ function txFeedback(t){
   if(t.type==='transfer')return `옮겼어요 · ${fmt(t.amount)}`;
   if(t.type==='income')return `수입 ${fmt(t.amount)} 기록했어요`;
   const ym=thisYM();
+  if(isRefund(t)){
+    // 환불은 '얼마가 돌아왔나' 보다 '그래서 이 카드 실적이 어떻게 됐나' 가 궁금하다
+    const c=t.payKind==='card'?cardById(t.payId):null;
+    if(c&&c.type==='credit'&&(c.tiers||[]).length)
+      return `환불 ${fmt(-t.amount)} · 실적 ${fmtK(perfSpend(c,ym))}원으로 내려감`;
+    return `환불 ${fmt(-t.amount)} 기록했어요`;
+  }
   // ① 예산을 정해뒀으면 남은 돈이 가장 궁금하다
   const b=budgetOf(ym);
   if(b&&b.total>0){
@@ -2484,7 +2523,8 @@ function txFeedback(t){
   }
   // ③ 그 외에는 오늘 쓴 돈 — 늘 있고 늘 맞는 숫자다
   const today=dayTx(todayStr()).filter(x=>x.type==='expense').reduce((s,x)=>s+x.amount,0);
-  return `기록했어요 · 오늘 ${fmt(today)} 썼어요`;
+  return today>=0?`기록했어요 · 오늘 ${fmt(today)} 썼어요`
+                 :`기록했어요 · 오늘은 ${fmt(-today)} 돌려받았어요`;
 }
 /* 방금 저장한 것 한 번만 되돌린다 — 잘못 눌렀을 때 내역 탭까지 찾아가지 않게 */
 let lastTxUndo=null;
@@ -2497,6 +2537,20 @@ function undoLastTx(){
   if(u.kind==='add')S.tx.splice(i,1);
   else{ S.tx[i]={...u.before}; applyBalance(S.tx[i],1); }
   save(); renderAll(); toast('되돌렸어요');
+}
+/* 원래 내역에서 바로 환불 — 금액·카테고리·결제수단을 그대로 물려받는다.
+ * 부분 환불이면 금액만 고치면 된다. 이게 95% 의 경우다. */
+function refundOf(id){
+  const t=S.tx.find(x=>x.id===id); if(!t)return;
+  if((t.months||1)>1)
+    return toast('할부 건은 원래 내역의 개월 수·금액을 고쳐주세요 — 남은 회차가 어긋납니다');
+  txCatOpen=false; txMoreOpen=false; txFocusAmt=true;
+  txDraft={id:null,type:'expense',refund:true,date:todayStr(),
+    amount:String(Math.abs(+t.amount||0)),cat:t.cat,memo:t.memo||'',
+    payKind:t.payKind,payId:t.payId||'',defended:false,months:1,paidPortions:0,
+    noPerf:!!t.noPerf,via:t.via||'',fromId:'',toId:'',
+    autoCat:false,autoPay:false,catWhy:''};
+  renderTxModal();
 }
 function delTx(id){
   const t=S.tx.find(x=>x.id===id);if(!t)return;
@@ -6009,7 +6063,8 @@ function renderBudget(){
     <div class="tiny" style="margin-top:7px">${verdict}</div>
     <div class="tiny" style="margin-top:3px">▍표시선은 오늘까지의 정상 페이스 · 남은 ${Math.max(0,p.dim-p.day)}일 동안 하루 <b class="num">${fmt(p.dailyLeft)}</b>까지 쓸 수 있어요</div>
     ${(b.cats&&Object.keys(b.cats).length)?`<div class="divider"></div>${Object.entries(b.cats).map(([c,v])=>{
-      const s=catSums(ym).find(x=>x[0]===c);const used=s?s[1]:0;const pc=v>0?used/v*100:0;
+      const s=catSums(ym).find(x=>x[0]===c);const used=s?s[1]:0;
+      const pc=v>0?Math.max(0,Math.min(100,used/v*100)):0;   // 환불로 음수가 되면 막대가 뒤집힌다
       return`<div class="bd-row"><div class="bd-top"><span class="bd-name">${CAT_EMO[c]||''} ${c}</span><span class="bd-nums num">${fmtK(used)} / ${fmtK(v)}</span></div>
       <div class="bd-track"><div class="bd-fill" style="width:${Math.min(100,pc)}%;background:${pc>=100?'var(--terra)':pc>=80?'var(--gold)':'var(--green)'}"></div></div></div>`}).join('')}`:''}`;
 }
@@ -6074,7 +6129,7 @@ function detectAnomalies(){
   const hist={};
   for(let i=1;i<=3;i++){
     const d=new Date();d.setMonth(d.getMonth()-i);
-    monthTx(`${d.getFullYear()}-${pad(d.getMonth()+1)}`).filter(t=>t.type==='expense'&&!t.fixedId)
+    monthTx(`${d.getFullYear()}-${pad(d.getMonth()+1)}`).filter(t=>realSpend(t)&&!t.fixedId)
       .forEach(t=>{(hist[t.cat]=hist[t.cat]||[]).push(t.amount)});
   }
   const recent=m.filter(t=>{const dd=(new Date(todayStr())-new Date(t.date))/86400000;return dd>=0&&dd<=14});
@@ -6793,7 +6848,8 @@ function renderByCat(list,ym){
   const rows=Object.entries(byCat).map(([c,arr])=>({c,arr,sum:arr.reduce((s,x)=>s+x.amount,0)}))
     .sort((a,b)=>b.sum-a.sum);
   const total=rows.reduce((s,r)=>s+r.sum,0);
-  const max=rows[0].sum;
+  // 환불이 많으면 합이 0 이나 음수가 될 수 있다 — 막대 폭이 NaN/음수가 되지 않게
+  const max=Math.max(1,...rows.map(r=>Math.abs(r.sum)));
   return`<div class="card tight">${rows.map(({c,arr,sum})=>{
     const open=!!openCats[c], pct=total>0?sum/total*100:0;
     return`<div class="cat-group">
@@ -6802,8 +6858,8 @@ function renderByCat(list,ym){
         <div class="c-main">
           <div class="row"><span class="c-name">${esc(c)} <span class="tiny">${arr.length}건</span></span>
             <span class="num" style="font-weight:800;font-size:.9rem">${fmt(sum)}</span></div>
-          <div class="cat-bar"><i style="width:${sum/max*100}%;background:${type==='income'?'var(--green)':'var(--terra)'}"></i></div>
-          <div class="tiny" style="margin-top:3px">전체의 ${pct.toFixed(0)}% · 탭하면 ${open?'접기':'상세'}</div>
+          <div class="cat-bar"><i style="width:${Math.min(100,Math.abs(sum)/max*100)}%;background:${sum<0?'var(--green)':(type==='income'?'var(--green)':'var(--terra)')}"></i></div>
+          <div class="tiny" style="margin-top:3px">${sum<0?'환불이 더 많아요':`전체의 ${Math.max(0,pct).toFixed(0)}%`} · 탭하면 ${open?'접기':'상세'}</div>
         </div>
         <span class="tiny" style="margin-left:6px">${open?'▲':'▼'}</span>
       </div>
@@ -7177,7 +7233,7 @@ function quickList(){
         영영 2회에 도달하지 못했다. 이제 '가맹점+카테고리'로 묶고 금액은 최근값을 쓴다.
         금액이 들쭉날쭉한 항목은 바로 기록하지 않고 입력창을 열어 확인받는다. */
   const m={};
-  S.tx.filter(t=>t.type==='expense'&&(t.memo||'').trim()).slice(-120).forEach(t=>{
+  S.tx.filter(t=>realSpend(t)&&(t.memo||'').trim()).slice(-120).forEach(t=>{
     const k=`${t.cat}|${_pnorm(t.memo)}`;
     m[k]=m[k]||{cat:t.cat,memo:t.memo.trim(),payKind:t.payKind,payId:t.payId,amounts:[],n:0};
     m[k].memo=t.memo.trim(); m[k].payKind=t.payKind; m[k].payId=t.payId;
