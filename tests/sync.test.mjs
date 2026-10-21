@@ -297,3 +297,75 @@ const TX = (id, memo) => ({ id, type: 'expense', date: '2026-09-15', amount: 100
      `status=${phone.Sync.status} err="${phone.Sync.lastError}"`);
 }
 
+
+/* ══════ ⑩ 왜 안 되는지 말해줘야 한다 ══════
+ * 로그인·동기화는 설정·네트워크·서버·계정 어느 한 곳만 어긋나도 전부 '오류' 한 단어로만
+ * 보였다. 프로젝트가 멈췄을 때는 lastError 가 "{}" 였다 — 사용자가 할 수 있는 게 없다. */
+{
+  const ctx2 = (() => {
+    const store = {};
+    const c = {
+      console, setTimeout, clearTimeout, Promise, JSON, Date, Math, Array, Object, String, Error,
+      localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } },
+      document: { addEventListener() {}, visibilityState: 'visible' },
+      navigator: { onLine: true }, addEventListener() {},
+      atob: (s) => Buffer.from(s, 'base64').toString('binary'),
+    };
+    c.window = c; c.globalThis = c; c.self = c;
+    vm.createContext(c); vm.runInContext(SRC, c);
+    return c;
+  })();
+  const M = ctx2.window.Sync._msg.bind(ctx2.window.Sync);
+  const cases = [
+    ['서버에 못 닿을 때', { message: 'Failed to fetch' }, /닿지 못했|멈춰/],
+    ['비밀번호가 틀릴 때', { message: 'Invalid login credentials' }, /비밀번호/],
+    ['이메일 인증 전', { message: 'Email not confirmed' }, /인증/],
+    ['이미 가입된 이메일', { message: 'User already registered' }, /이미 가입/],
+    ['프로젝트가 멈췄을 때(503)', { status: 503 }, /멈춰/],
+    ['아무 정보도 없을 때', {}, /응답하지 않|점검/],
+    ['테이블이 없을 때', { message: 'relation "flow_state" does not exist' }, /테이블|schema/],
+  ];
+  cases.forEach(([label, err, want]) => {
+    const got = M(err);
+    ok(`${label} 무엇을 하면 되는지 말한다`, want.test(got) && !/^\{?\}?$/.test(got), got);
+  });
+  ok('  영어 원문을 그대로 던지지 않는다',
+    cases.every(([, e]) => !/^[\x00-\x7F]*$/.test(M(e))), M({ message: 'Failed to fetch' }));
+}
+
+/* ══════ ⑪ 기기에 남은 옛 프로젝트를 알아채고 되돌릴 수 있다 ══════
+   프로젝트를 바꾼 적이 있으면 기기에 저장된 설정이 내장 설정을 가려 로그인이
+   영영 실패하는데, 그 사실이 화면 어디에도 안 나왔다. */
+{
+  const store = {};
+  const c = {
+    console, setTimeout, clearTimeout, Promise, JSON, Date, Math, Array, Object, String, Error,
+    localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } },
+    document: { addEventListener() {}, visibilityState: 'visible' },
+    navigator: { onLine: true }, addEventListener() {},
+    atob: (s) => Buffer.from(s, 'base64').toString('binary'),
+    CLAUDE_FLOW_CONFIG: { supabaseUrl: 'https://builtin0000000000.supabase.co',
+      supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' + 'x'.repeat(60) + '.yyyy' },
+  };
+  c.window = c; c.globalThis = c; c.self = c;
+  vm.createContext(c); vm.runInContext(SRC, c);
+  const S2 = c.window.Sync;
+
+  S2.cfg = S2.loadCfg();
+  const fresh = S2.where();
+  ok('설정이 없으면 앱 기본을 쓴다', fresh.builtin === true && !fresh.overridden, fresh.url);
+
+  store['claudeflow_sync_cfg'] = JSON.stringify({ url: 'https://oldproject000000.supabase.co', anonKey: 'eyJ.x.y' });
+  S2.cfg = S2.loadCfg();
+  const stale = S2.where();
+  ok('옛 프로젝트가 남아 있으면 그걸 쓴다', stale.url.includes('oldproject'), stale.url);
+  ok('  앱 기본과 다르다는 것을 알아챈다', stale.overridden === true);
+  ok('  앱 기본 주소도 함께 알려준다', stale.builtinUrl.includes('builtin'), stale.builtinUrl);
+
+  S2.client = null; S2._unsubscribeRealtime = () => {};
+  S2.init = () => {};                       // 되돌린 뒤 실제 연결까지는 여기서 보지 않는다
+  await S2.useBuiltin();
+  const back = S2.where();
+  ok('  되돌리면 앱 기본으로 돌아온다', back.builtin === true && !back.overridden, back.url);
+  ok('  기기에 저장된 설정도 지워진다', !store['claudeflow_sync_cfg'], store['claudeflow_sync_cfg'] || '없음');
+}

@@ -914,7 +914,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20261015-refund';
+const APP_BUILD='20261021-syncdiag';
 const KEY='claudeflow_v1';
 const BROKEN_KEY='claudeflow_broken';   // 읽지 못한 원본을 옮겨 두는 곳(복구용)
 const store={
@@ -7587,18 +7587,88 @@ function renderSyncSection(){
       <div class="tiny" style="margin-bottom:10px">기기마다 데이터가 어긋났을 때, 지금 이 기기 상태를 기준으로 맞춰요.</div>
       <div class="grid2"><button class="btn ghost" onclick="syncSignOut()">로그아웃</button><button class="btn ghost" style="color:var(--danger)" onclick="syncDisconnect()">연결 해제</button></div>`;
   }
+  /* 어디에 연결돼 있는지, 그리고 왜 실패했는지를 화면에 남긴다.
+     토스트는 2초면 사라져서 "로그인이 안 된다" 는 말 말고는 아무것도 못 남겼다. */
+  const w=(Sync.where?Sync.where():{});
+  const warn=w.overridden
+    ? `<div class="card tight" style="background:var(--terra-soft);border-color:var(--terra-line);margin-bottom:10px">
+        <div style="font-size:.82rem;font-weight:700;color:var(--terra-deep)">⚠️ 이 기기만 다른 프로젝트에 연결돼 있어요</div>
+        <div class="tiny" style="margin-top:4px;word-break:break-all">지금: <b>${esc(w.url)}</b><br>앱 기본: ${esc(w.builtinUrl)}</div>
+        <button class="btn dark sm block" style="margin-top:8px" onclick="syncUseBuiltin()">앱 기본 프로젝트로 되돌리기</button></div>`
+    : '';
+  const errBox=(Sync.status==='error'&&Sync.lastError)
+    ? `<div class="card tight" style="background:var(--terra-soft);border-color:var(--terra-line);margin-bottom:10px">
+        <div style="font-size:.82rem;font-weight:700;color:var(--terra-deep)">${esc(Sync.lastError)}</div>
+        <div class="tiny" style="margin-top:4px;color:var(--sub)">로컬 저장은 정상이에요 — 기록은 이 기기에 그대로 있습니다.</div></div>`
+    : '';
   return `<div class="card tight" style="margin-bottom:14px">
     <div class="row" style="margin-bottom:8px"><b style="font-size:.92rem">☁️ 클라우드 동기화</b><span id="sync-status-line" style="font-size:.75rem;font-weight:700;color:${syncStatusColor()}">${syncStatusText()}</span></div>
-    ${inner}</div>`;
+    ${warn}${errBox}${inner}
+    <button class="btn ghost sm block" style="margin-top:10px" onclick="syncDiagnose()">🩺 동기화 점검</button>
+    <div id="sync-diag" class="tiny" style="margin-top:8px"></div></div>`;
+}
+/* ── 동기화가 왜 안 되는지 ───────────────────────────────────────────
+   로그인·동기화는 설정·네트워크·서버·계정 어느 한 곳만 어긋나도 똑같이 '오류' 로만
+   보였다. 푸시 점검처럼 단계를 하나씩 짚어 어디서 막혔는지 그대로 보여준다. */
+async function syncDiagnose(){
+  const box=$('sync-diag'); if(!box)return;
+  box.innerHTML='점검 중…';
+  const L=[];
+  const mark=(ok,t)=>L.push(`${ok?'✅':'❌'} ${t}`);
+  const warn=t=>L.push(`⚠️ ${t}`);
+  const show=()=>box.innerHTML=L.join('<br>');
+
+  if(!window.Sync){ box.innerHTML='❌ 동기화 모듈이 안 불려졌어요 — 새로고침해주세요'; return; }
+  // ① 라이브러리
+  mark(!!(window.supabase&&window.supabase.createClient),
+    '동기화 라이브러리'+((window.supabase&&window.supabase.createClient)?'':' — 새로고침하거나 오프라인인지 확인해주세요'));
+  // ② 연결 설정
+  const w=Sync.where?Sync.where():{};
+  if(!Sync.configured()){ mark(false,'연결 정보 없음 — 아래에 URL·anon key 를 넣어주세요'); show(); return; }
+  mark(true,`연결 대상: ${w.builtin?'앱 기본':'직접 입력'} · <span style="word-break:break-all">${esc(w.url||'')}</span>`);
+  if(w.overridden)warn('앱 기본과 다른 프로젝트예요 — 위 [앱 기본 프로젝트로 되돌리기]를 눌러보세요');
+  show();
+  // ③ 서버에 닿는가
+  const ping=Sync.ping?await Sync.ping():{ok:false,why:'확인 불가'};
+  mark(ping.ok,`서버 응답${ping.ok?` (${ping.ms}ms)`:` — ${esc(ping.why||'')}`}`);
+  if(!ping.ok)warn('프로젝트가 멈췄을 수 있어요. Supabase 대시보드에서 프로젝트를 다시 켜주세요 (무료 플랜은 한동안 안 쓰면 멈춥니다).');
+  show();
+  // ④ 로그인
+  mark(Sync.signedIn(),`로그인 ${Sync.signedIn()?`· ${esc(Sync.email()||'')}`:'— 아직 안 했어요'}`);
+  show();
+  // ⑤ 실제 읽기/쓰기
+  if(Sync.signedIn()){
+    try{
+      const r=await Sync.client.from('flow_state').select('rev').eq('user_id',Sync.session.user.id).maybeSingle();
+      if(r.error)mark(false,'클라우드 데이터 읽기 — '+esc(Sync._msg(r.error)));
+      else mark(true,`클라우드 데이터 읽기${r.data?` · 리비전 ${r.data.rev}`:' · 아직 저장된 것 없음'}`);
+    }catch(e){ mark(false,'클라우드 데이터 읽기 — '+esc(Sync._msg(e))); }
+  }
+  if(Sync.lastError)warn('마지막 오류: '+esc(Sync.lastError));
+  L.push(`<span style="color:var(--faint)">상태 ${esc(Sync.status)} · 리비전 ${Sync.knownRev||0} · ${esc(APP_BUILD)}</span>`);
+  show();
+}
+function syncUseBuiltin(){
+  if(!(window.Sync&&Sync.useBuiltin))return;
+  Sync.useBuiltin().then(()=>{toast('앱 기본 프로젝트로 되돌렸어요 — 다시 로그인해주세요');openSettings();})
+    .catch(e=>toast(e.message||'되돌리지 못했어요'));
 }
 function syncConnect(){ const url=val('sy-url'),key=val('sy-key');
   Sync.connect(url,key).then(()=>{toast('연결했어요 — 이제 로그인하세요');openSettings();}).catch(e=>toast(e.message||'연결 실패')); }
+/* 실패하면 토스트로 흘려보내지 않는다 — 2초면 사라져서 왜 안 되는지 알 길이 없었다.
+   Sync.lastError 는 한국어로 번역돼 있으니 그걸 화면에 남기고, 점검도 같이 띄운다. */
 function syncSignIn(){ const email=val('sy-email').trim(),pw=val('sy-pw');
   if(!email||!pw){toast('이메일과 비밀번호를 입력해주세요');return}
-  toast('로그인 중…'); Sync.signIn(email,pw).then(()=>{toast('로그인했어요 — 동기화됩니다');openSettings();}).catch(e=>toast('로그인 실패 — '+(e.message||''))); }
+  toast('로그인 중…');
+  Sync.signIn(email,pw)
+    .then(()=>{toast('로그인했어요 — 동기화됩니다');openSettings();})
+    .catch(()=>{ openSettings(); setTimeout(syncDiagnose,60); }); }
 function syncSignUp(){ const email=val('sy-email').trim(),pw=val('sy-pw');
   if(!email||pw.length<6){toast('이메일과 6자 이상 비밀번호를 입력해주세요');return}
-  toast('가입 중…'); Sync.signUp(email,pw).then(r=>{ toast(r&&r.needConfirm?'확인 메일을 보냈어요 — 인증 후 로그인하세요':'가입·로그인 완료 — 동기화됩니다'); openSettings(); }).catch(e=>toast('가입 실패 — '+(e.message||''))); }
+  toast('가입 중…');
+  Sync.signUp(email,pw)
+    .then(r=>{ toast(r&&r.needConfirm?'확인 메일을 보냈어요 — 인증 후 로그인하세요':'가입·로그인 완료 — 동기화됩니다'); openSettings(); })
+    .catch(()=>{ openSettings(); setTimeout(syncDiagnose,60); }); }
 function syncSignOut(){ Sync.signOut().then(()=>{toast('로그아웃했어요');openSettings();}); }
 function syncDisconnect(){ if(!confirm('이 기기의 클라우드 연결을 해제할까요? 로컬 데이터는 그대로 남아요.'))return;
   Sync.disconnect().then(()=>{toast('연결을 해제했어요');openSettings();}); }

@@ -310,6 +310,24 @@
       done(); return Promise.resolve();
     },
 
+    /* 이 기기에만 저장해 둔 연결 설정을 버리고 앱에 내장된 프로젝트로 되돌린다.
+       예전 프로젝트가 남아 있으면 로그인이 영영 실패하는데, 그걸 푸는 길이 없었다. */
+    useBuiltin: function () {
+      var b = this.builtinCfg();
+      if (!b) return Promise.reject(new Error('앱에 내장된 프로젝트가 없어요'));
+      var self = this;
+      this._unsubscribeRealtime();
+      var done = function () {
+        self.clearCfg();
+        self.client = null; self.session = null; self.knownRev = 0;
+        try { localStorage.removeItem(REV_KEY); } catch (e) {}
+        self.cfg = b;
+        self.init();
+      };
+      if (this.client && this.client.auth) return this.client.auth.signOut().then(done).catch(done);
+      done(); return Promise.resolve();
+    },
+
     /* ─────────────────────────── 내려받기(pull) ─────────────────────────── */
     pull: function (applyToApp) {
       if (!this.session || !this.client) return Promise.resolve();
@@ -706,9 +724,64 @@
         });
     },
 
+    /* 실패를 '오류' 한 단어로 보여주면 사용자가 할 수 있는 게 없다.
+     * Supabase 가 주는 문구는 영어이고, 프로젝트가 멈췄을 때는 아예 빈 객체({})가 온다.
+     * 무엇이 막혔고 무엇을 하면 되는지로 바꿔 준다. */
     _msg: function (e) {
       if (!e) return '알 수 없는 오류';
-      return e.message || e.error_description || (typeof e === 'string' ? e : JSON.stringify(e));
+      var raw = e.message || e.error_description || e.msg
+        || (typeof e === 'string' ? e : '');
+      var code = e.status || e.code || '';
+      var s = String(raw);
+
+      if (/Failed to fetch|NetworkError|network error|Load failed|ERR_/i.test(s))
+        return '서버에 닿지 못했어요 — 인터넷을 확인해주세요. 계속 그러면 클라우드 프로젝트가 멈춰 있을 수 있어요.';
+      if (/Invalid login credentials/i.test(s))
+        return '이메일 또는 비밀번호가 달라요.';
+      if (/Email not confirmed/i.test(s))
+        return '이메일 인증이 아직이에요 — 받은 메일의 링크를 눌러주세요.';
+      if (/User already registered|already been registered/i.test(s))
+        return '이미 가입된 이메일이에요 — [로그인]을 눌러주세요.';
+      if (/Password should be at least/i.test(s))
+        return '비밀번호가 너무 짧아요 (6자 이상).';
+      if (/rate limit|too many requests/i.test(s) || code === 429)
+        return '잠시 뒤에 다시 시도해주세요 (요청이 너무 잦아요).';
+      if (/Invalid API key|JWT|apikey/i.test(s))
+        return '연결 정보가 맞지 않아요 — 설정에서 [동기화 점검]을 눌러보세요.';
+      if (/relation .* does not exist|schema cache|PGRST/i.test(s) || code === '42P01')
+        return '클라우드에 저장 테이블이 없어요 — schema.sql 을 한 번 실행해야 해요.';
+      if (code === 503 || code === 502 || code === 504)
+        return '클라우드 프로젝트가 멈춰 있어요 — Supabase 대시보드에서 다시 켜주세요.';
+      if (!s || s === '{}' || s === '[object Object]')
+        return '클라우드가 응답하지 않아요 — 프로젝트가 멈춰 있을 수 있어요 (설정 → 동기화 점검).';
+      return s;
+    },
+    /* 어디에 연결돼 있는지. 기기에 저장된 설정이 내장 설정을 가리면 로그인이
+       영영 실패하는데, 그 사실이 화면 어디에도 안 나왔다. */
+    where: function () {
+      var b = this.builtinCfg();
+      var cur = this.cfg;
+      return {
+        url: cur ? cur.url : '',
+        builtin: !!(cur && cur.builtin),
+        builtinUrl: b ? b.url : '',
+        overridden: !!(cur && b && cur.url !== b.url),
+        hasBuiltin: !!b
+      };
+    },
+    /* 실제로 서버에 닿는지 확인한다 — 로그인 전에도 쓸 수 있는 공개 엔드포인트 */
+    ping: function () {
+      var cfg = this.cfg;
+      if (!cfg || !cfg.url) return Promise.resolve({ ok: false, why: '연결 정보 없음' });
+      var t0 = Date.now();
+      return fetch(cfg.url + '/auth/v1/health', { headers: { apikey: cfg.anonKey } })
+        .then(function (r) {
+          return { ok: r.ok, status: r.status, ms: Date.now() - t0,
+            why: r.ok ? '' : (r.status === 503 ? '프로젝트가 멈춰 있어요' : 'HTTP ' + r.status) };
+        })
+        .catch(function (e) {
+          return { ok: false, ms: Date.now() - t0, why: '닿지 못함 (' + (e.message || '') + ')' };
+        });
     }
   };
 
