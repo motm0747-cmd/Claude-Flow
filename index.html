@@ -180,6 +180,17 @@ header{display:flex;align-items:center;justify-content:space-between;padding:20p
   margin:3px 0 3px;white-space:nowrap;line-height:1.15}
 .hero-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin-top:16px;
   background:var(--line);border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden}
+/* 카드값 내고 나면 남는 돈 — 대표 숫자(다음 수입일까지)가 못 보는 그 뒤를 메운다 */
+.hero-after{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  margin-top:13px;padding:10px 12px;border-radius:var(--r-sm);
+  background:var(--fill);border:1px solid var(--line);cursor:pointer}
+.hero-after .k{font-size:var(--t-xs);color:var(--sub);font-weight:700;min-width:0}
+.hero-after .s{font-size:var(--t-xs);color:var(--faint);font-weight:600;
+  display:block;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hero-after .v{font-size:var(--t-lg);font-weight:800;white-space:nowrap;flex-shrink:0}
+.hero-after.short{background:var(--terra-soft);border-color:var(--terra-line)}
+.hero-after.short .v{color:var(--terra-deep)}
+.hero-after:active{transform:scale(.995)}
 .hero-grid .cell{background:var(--surface);padding:11px 12px;min-width:0}
 .hero-grid .cell .k{font-size:var(--t-xs);color:var(--faint);font-weight:600;white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis}
@@ -723,6 +734,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
         </div>
         <div class="score-chip" onclick="switchView('report')" id="h-score-chip"></div>
       </div>
+      <div id="h-after"></div>
       <div class="hero-grid">
         <div class="cell" onclick="switchView('assets')" style="cursor:pointer">
           <div class="k" id="h-c1-k">순자산</div><div class="v num" id="h-c1-v">0</div></div>
@@ -914,7 +926,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20261021-syncdiag';
+const APP_BUILD='20261021-aftercard';
 const KEY='claudeflow_v1';
 const BROKEN_KEY='claudeflow_broken';   // 읽지 못한 원본을 옮겨 두는 곳(복구용)
 const store={
@@ -1891,6 +1903,29 @@ function renderHome(){
 }
 /* ① 히어로 — 대표 숫자는 '쓸 수 있는 돈'.
  *    입출금 계좌가 없어 계산이 안 되면 순자산으로 물러선다(없는 값을 지어내지 않는다). */
+/* 잔액 곡선은 홈에서 두 군데가 쓴다(부족 경고 · 카드값 뒤 잔액). 저장할 때마다
+   캐시가 비워지므로 같은 화면 안에서는 한 번만 계산한다. */
+function cashflowCached(){ return _mcGet('cf|'+todayStr(),()=>cashflowPlan()); }
+/* ── 카드값 내고 나면 얼마 남나 ──────────────────────────────────────
+ * 홈의 '쓸 수 있는 돈' 은 **다음 수입일까지만** 본다. 그런데 카드 결제일은 그 뒤인
+ * 경우가 많아서 "급여 들어오면 넉넉한데, 카드값 빠지고 나면?" 에는 답하지 못했다.
+ * 잔액 곡선에서 다음 카드 결제 시점을 집어 그 직후 잔액을 그대로 가져온다 —
+ * 곡선에는 그 사이의 고정비·적금·수입·평소 지출이 이미 반영돼 있다. */
+function afterCardPay(plan){
+  if(!S.accounts.some(a=>a.type==='checking'))return null;   // 곡선 자체가 의미 없다
+  const p=plan||cashflowCached();
+  if(!p||!p.line)return null;
+  for(const pt of p.line){
+    const cards=(pt.ev||[]).filter(e=>e.t==='card');
+    if(!cards.length)continue;
+    return{date:pt.d, days:dayGap(p.today,pt.d),
+      cards:cards.map(c=>({name:c.n,amt:c.v,est:!!c.est})),
+      total:cards.reduce((s,c)=>s+c.v,0),
+      after:pt.bal,
+      est:cards.some(c=>c.est)};     // 실제 미결제가 아니라 사용 페이스로 추정한 경우
+  }
+  return null;
+}
 function renderHero(ym,inc,exp,bal){
   const s=safeSpend();
   const lead=$('h-lead'), label=$('h-lead-label'), sub=$('h-lead-sub'), btn=$('h-lead-btns');
@@ -1921,6 +1956,7 @@ function renderHero(ym,inc,exp,bal){
   }
   $('h-inc').textContent='+'+fmtK(inc);
   $('h-exp').textContent='−'+fmtK(exp);
+  renderAfterCard();
   // 기록이 모자라면 점수를 지어내지 않고, 몇 건이 더 필요한지 말한다
   const sr=scoreReady(ym), chip=$('h-score-chip');
   chip.classList.toggle('pending',!sr.ok);
@@ -1929,8 +1965,54 @@ function renderHero(ym,inc,exp,bal){
     // 링 안에 숫자가 없으므로 글자를 지우면 빈 원만 남는다 — 좁은 화면에서도 남긴다
     : scorePending(sr.n)+`<div class="sc-note"><div class="k">분석 준비 중</div><div class="v num">${sr.n}/${sr.need}건</div></div>`;
 }
-/* ② 해야 할 일 — 빈 슬롯을 세어 개수를 붙이고, 하나도 없으면 그렇게 말한다 */
-function refreshTodo(){
+function renderAfterCard(){
+  const el=$('h-after'); if(!el)return;
+  let r=null; try{ r=afterCardPay(); }catch(e){ r=null; }
+  if(!r){ el.innerHTML=''; el.className=''; return; }
+  const short=r.after<0;
+  // 카드가 하나면 합계와 카드 금액이 같아 두 번 적는 꼴이 된다
+  const names=r.cards.length>1?' · '+r.cards.map(c=>`${esc(c.name)} ${fmtK(c.amt)}`).join(' · ')
+    :` · ${esc(r.cards[0].name)}`;
+  el.className='hero-after'+(short?' short':'');
+  el.setAttribute('onclick','openAfterCard()');
+  el.innerHTML=`<div style="min-width:0">
+      <div class="k">💳 ${mdLabel(r.date)} 카드값 내고 나면${r.days<=0?' (오늘)':''}</div>
+      <span class="s">−${fmt(r.total)}${r.est?' (추정)':''}${names}</span>
+    </div>
+    <div class="v num">${short?'−':''}${fmt(Math.abs(r.after))}</div>`;
+}
+/* 숫자 하나만 보여주면 '왜 그 값인지' 를 알 수 없다. 눌렀을 때 그날까지 무엇이
+   들어오고 나가는지를 곡선에서 그대로 펼친다 — 지어낸 값이 아니라는 걸 보이려고. */
+function openAfterCard(){
+  const p=cashflowCached(), r=afterCardPay(p);
+  if(!r)return;
+  const upto=p.line.filter(x=>x.d<=r.date&&x.ev&&x.ev.length);
+  const KIND={in:['수입','var(--green)'],out:['고정비','var(--terra-deep)'],
+    save:['적금·청약','var(--blue)'],card:['카드 결제','var(--terra-deep)']};
+  const rows=upto.map(x=>x.ev.map(e=>{
+    const[label,col]=KIND[e.t]||['기타','var(--sub)'];
+    const plus=e.t==='in';
+    return`<div class="row" style="padding:6px 0;gap:10px">
+      <span style="font-size:.84rem;min-width:0">${mdLabel(x.d)} · ${esc(e.n)}
+        <span class="tiny" style="color:var(--faint)">${label}${e.est?' · 추정':''}</span></span>
+      <b class="num" style="font-size:.86rem;white-space:nowrap;color:${col}">${plus?'+':'−'}${fmt(e.v)}</b></div>`;
+  }).join('')).join('');
+  openModal(`${sheetHead('카드값 내고 나면')}
+    <div class="card tight" style="margin-bottom:12px">
+      <div class="row"><span class="tiny">지금 입출금 잔액</span><b class="num">${fmt(p.start)}</b></div>
+      <div class="divider"></div>
+      ${rows||'<div class="empty">그 사이 예정된 변동이 없어요</div>'}
+      <div class="row" style="padding:6px 0"><span class="tiny">그 밖의 평소 지출 (최근 평균)</span>
+        <b class="num" style="color:var(--sub)">−${fmt(Math.max(0,p.start+upto.reduce((s,x)=>s+x.ev.reduce((t,e)=>t+(e.t==='in'?e.v:-e.v),0),0)-r.after))}</b></div>
+      <div class="divider"></div>
+      <div class="row"><b style="font-size:.9rem">${mdLabel(r.date)} 카드값까지 내고 나면</b>
+        <b class="num" style="font-size:1.15rem;color:${r.after<0?'var(--terra-deep)':'var(--green)'}">${fmt(r.after)}</b></div>
+    </div>
+    ${r.after<0?`<div class="tiny" style="margin-bottom:12px;color:var(--terra-deep)">⚠️ 이대로면 <b>${fmt(-r.after)}</b> 모자랄 수 있어요. 선결제로 미리 갚아두거나 큰 지출을 미루는 게 좋아요.</div>`:''}
+    <div class="tiny" style="margin-bottom:12px">카드값은 <b>지금까지 기록된 미결제액</b> 기준이에요${r.est?' (다음다음 결제부터는 이번 달 사용 페이스로 추정)':''}. 앞으로 쓸 돈은 최근 평균으로 잡았으니 실제와 다를 수 있어요.</div>
+    <button class="btn ghost block" onclick="closeModal();openFlowAI()">현금흐름 자세히 보기</button>`);
+}
+/* ② 해야 할 일 — 빈 슬롯을 세어 개수를 붙이고, 하나도 없으면 그렇게 말한다 */function refreshTodo(){
   const zone=$('todo-zone'); if(!zone)return;
   const n=[...zone.children].filter(el=>
     el.innerHTML.trim()!=='' && el.style.display!=='none' && el.dataset.nag!=='1').length;
@@ -5447,7 +5529,7 @@ async function flowForecast(){
 /* 홈 배너 — 잔액이 바닥날 것으로 보일 때만 */
 function renderFlowBanner(){
   const el=$('flow-slot'); if(!el)return;
-  let p; try{ p=cashflowPlan(); }catch(e){ el.innerHTML=''; return; }
+  let p; try{ p=cashflowCached(); }catch(e){ el.innerHTML=''; return; }
   if(!p.risk){ el.innerHTML=''; return; }
   el.innerHTML=`<div class="banner" style="border-color:var(--terra-line)">
     <div class="b-main">⚠️ <b>${esc(p.risk.d.slice(5).replace('-','/'))}</b>쯤 입출금 잔액이
