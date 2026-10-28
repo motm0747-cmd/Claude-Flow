@@ -150,6 +150,12 @@ header{display:flex;align-items:center;justify-content:space-between;padding:20p
 .ag-head .link{color:var(--sub);font-weight:700;display:flex;align-items:center;gap:7px}
 .ag-head .ag-caret{font-size:.8em;opacity:.75}
 .ag-head+.sec-title{margin-top:12px}
+/* 카드 안에서 분석 블록을 접는 머리 — 접혀 있으면 이 한 줄이 카드 전체가 된다 */
+.fold-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  cursor:pointer;user-select:none}
+.fold-head .link{color:var(--sub);font-weight:700;font-size:var(--t-sm);
+  display:flex;align-items:center;gap:7px}
+.fold-head .ag-caret{font-size:.8em;opacity:.75}
 /* 아직 안 쓰는 분류는 목록 대신 이 줄에만 남는다 */
 .add-row{display:flex;flex-wrap:wrap;gap:7px;margin:10px 2px 4px}
 /* 시작 마법사 단계 표시 */
@@ -276,9 +282,6 @@ header{display:flex;align-items:center;justify-content:space-between;padding:20p
 .hm-cell.today{border-color:var(--ink)}
 .hm-cell.sel{border-color:var(--terra);box-shadow:0 0 0 3px var(--terra-soft)}
 .hm-cell .dot{width:4px;height:4px;border-radius:var(--r-full);background:var(--green);position:absolute;bottom:5px}
-.heat-legend{display:flex;align-items:center;gap:5px;justify-content:flex-end;margin-top:11px;
-  font-size:var(--t-xs);color:var(--ghost)}
-.heat-legend i{width:12px;height:12px;border-radius:4px;display:inline-block}
 
 /* ── 자산 ── */
 .asset-item{display:flex;align-items:center;gap:12px;padding:12px 8px;margin:0 -8px;
@@ -836,7 +839,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
         </div>
         <div id="cal-box">
           <div class="cal-grid" id="cal-grid"></div>
-          <div class="heat-legend">적음 <i style="background:var(--fill)"></i><i style="background:rgba(217,119,87,.25)"></i><i style="background:rgba(217,119,87,.55)"></i><i style="background:rgba(217,119,87,.9)"></i> 많음</div>
+          <!-- 색이 진할수록 많이 썼다는 건 범례 없이도 읽힌다 — 읽을 게 한 줄 줄었다 -->
         </div>
         <div class="divider"></div>
         <div class="row muted num" id="cal-summary"></div>
@@ -860,8 +863,10 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
       <div id="fx-chip-slot" style="margin-top:8px"></div>
       <button class="btn ghost sm" id="ord-btn" style="margin-top:10px" onclick="toggleOrd()">순서 변경</button>
     </div>
-    <div class="card tight" id="alloc-card"></div>
+    <!-- 내 계좌가 먼저. 자산 배분은 그 아래 — 잔액을 보러 온 사람이 배분 도표를
+         357px 지나가야 했다 -->
     <div id="asset-groups"></div>
+    <div class="card tight" id="alloc-card" style="margin-top:16px"></div>
   </div>
 
   <!-- ─────────── 카드 ─────────── -->
@@ -876,9 +881,11 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
     <div id="cardview-manage">
     <button class="btn primary block" style="margin-bottom:12px" onclick="openCardPickModal()">💳 어느 카드로 쓸까?</button>
     <div class="card tight" id="streak-card"></div>
-    <div class="card" id="pick-card"></div>
+    <!-- 내 카드가 먼저. 피킹률 분석은 그 아래 — 카드를 보러 온 사람이 분석을
+         657px 스크롤해서 지나가야 했다 -->
     <div class="sec-title">내 카드 <span class="link" onclick="openCardModal()">+ 카드 추가</span></div>
     <div id="card-list"></div>
+    <div class="card" id="pick-card" style="margin-top:14px"></div>
     </div>
   </div>
 
@@ -926,7 +933,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20261021-aftercard';
+const APP_BUILD='20261028-simple';
 const KEY='claudeflow_v1';
 const BROKEN_KEY='claudeflow_broken';   // 읽지 못한 원본을 옮겨 두는 곳(복구용)
 const store={
@@ -1959,6 +1966,9 @@ function renderHero(ym,inc,exp,bal){
   renderAfterCard();
   // 기록이 모자라면 점수를 지어내지 않고, 몇 건이 더 필요한지 말한다
   const sr=scoreReady(ym), chip=$('h-score-chip');
+  // 기록이 아예 0건이면 '0/10건' 진행바는 처음 온 사람에게 들어본 적 없는 것의
+  // 진척도다. 한 건이라도 넣은 뒤부터 보여준다 — 그때는 격려가 된다
+  chip.style.display = (!sr.ok && !sr.n) ? 'none' : '';
   chip.classList.toggle('pending',!sr.ok);
   chip.innerHTML = sr.ok
     ? scoreRing(sr.hs.total)+`<div><div style="font-size:.68rem;color:var(--sub);font-weight:700">Health Score</div><div style="font-size:.78rem;font-weight:800">${sr.hs.total>=80?'훌륭해요':sr.hs.total>=55?'양호해요':'점검 필요'}</div></div>`
@@ -2031,6 +2041,23 @@ function applyHomeMore(){
 function toggleHomeMore(){
   S.settings.homeMore=!(S.settings&&S.settings.homeMore);
   save(); applyHomeMore();
+}
+/* ═════════ 분석 블록 접기 ═════════
+ * 탭을 열면 '보러 온 것'이 먼저 와야 한다. 그런데 재어보니 거꾸로였다 —
+ * 카드 탭에서 내 카드는 657px 아래, 자산 탭에서 내 계좌는 357px 아래 있었고
+ * 그 위를 피킹률 574px·자산배분 231px 가 덮고 있었다.
+ * 분석은 아래로 내리고 한 줄로 접는다. 지우는 게 아니라 순서를 바꾼다.
+ * 접힘 상태는 기억하므로, 한 번 펼친 사람은 계속 펼쳐진 채로 본다. */
+const foldOpen=k=>!!(((S.settings&&S.settings.fold)||{})[k]);
+function toggleFold(k){
+  S.settings.fold=Object.assign({},(S.settings&&S.settings.fold)||{},{[k]:!foldOpen(k)});
+  save(); renderAll();
+}
+/* 접혀 있을 때도 핵심 한 줄(hint)은 보여준다 — 펼치지 않고 지나갈 수 있어야 접는 의미가 있다 */
+function foldHead(k,label,hint){
+  return`<div class="fold-head" onclick="toggleFold('${k}')">
+    <span style="font-weight:800;font-size:.92rem">${label}</span>
+    <span class="link">${hint||''}<span class="ag-caret">${foldOpen(k)?'▴':'▾'}</span></span></div>`;
 }
 function goMakeReport(ym){switchView('report');setRepView('sum');selectRepMonth(ym);genReport(ym);}
 function payLabel(t){
@@ -5628,8 +5655,12 @@ function renderAlloc(){
 
   // 목표에서 5%p 넘게 벗어난 것만 제안한다 (조금씩 흔들리는 건 정상)
   const drift=rows.filter(r=>r.gap!=null&&Math.abs(r.gap)>=5).sort((a,b)=>Math.abs(b.gap)-Math.abs(a.gap));
-  el.innerHTML=`<div class="row" style="margin-bottom:2px">
-      <div style="font-weight:700;font-size:.92rem">⚖️ 자산 배분</div>
+  /* 접힘 — 조정할 게 있는지 없는지는 그 한 줄에 남긴다 */
+  const head=foldHead('alloc','⚖️ 자산 배분',
+    !tgt?'목표 미설정':drift.length?`<span style="color:var(--terra);font-weight:800">${drift.length}곳 조정</span>`:'✅ 목표에 맞음');
+  if(!foldOpen('alloc')){el.innerHTML=head;return}
+  el.innerHTML=head+`
+    <div style="text-align:right;margin-top:6px">
       <button class="btn ghost sm" onclick="openAllocModal()">${tgt?'목표 수정':'목표 정하기'}</button></div>
     ${bar}
     ${rows.map(r=>`<div class="row" style="padding:6px 0;gap:10px">
@@ -6836,9 +6867,12 @@ function renderPickRate(){
   const totSpend=rows.reduce((s,x)=>s+x.p.spend,0), totGot=rows.reduce((s,x)=>s+x.p.got,0);
   const totRate=totSpend>0?totGot/totSpend*100:0;
   const tt=pickTier(totRate);
-  el.innerHTML=`
-    <div class="row" style="margin-bottom:8px"><div style="font-weight:800;font-size:.92rem">📊 카드 피킹률</div>
-      <span class="tiny">${ymLabel(ym)} 기준</span></div>
+  /* 접혀 있으면 한 줄 — 숫자와 등급은 그 줄에 그대로 남으므로 펼치지 않고도 알 수 있다 */
+  const head=foldHead('pick','📊 카드 피킹률',
+    `<span class="num" style="color:${tt.color};font-weight:800">${totRate.toFixed(2)}%</span> ${tt.label}`);
+  if(!foldOpen('pick')){el.innerHTML=head;return}
+  el.innerHTML=head+`
+    <div class="tiny" style="text-align:right;margin:4px 0 8px">${ymLabel(ym)} 기준</div>
     <div style="background:var(--bg);border-radius:var(--r-sm);padding:13px;margin-bottom:12px;text-align:center">
       <div class="tiny">전체 피킹률 (받은 혜택 ÷ 카드 사용액)</div>
       <div class="num" style="font-size:1.7rem;font-weight:800;color:${tt.color}">${totRate.toFixed(2)}%</div>
@@ -7058,30 +7092,43 @@ function openSettings(){
     ${renderPushSection()}
     ${(window.Sync&&Sync.signedIn&&Sync.signedIn())?renderNotifySection():''}
     ${renderThemeSection()}
-    <div class="grid2" style="margin-bottom:14px">
-      <button class="btn ghost" onclick="openCatModal('exp')">🗂️ 카테고리 관리</button>
-      <button class="btn ghost" onclick="openFixCheckModal()">🩺 데이터 점검</button>
+    <button class="btn ghost block" style="margin-bottom:14px" onclick="openCatModal('exp')">🗂️ 카테고리 관리</button>
+    <!-- 여기서부터는 1년에 한 번 쓰는 것들. 설정창이 1,177px 로 화면을 넘겨
+         매일 쓰는 것(로그인·알림·테마)까지 스크롤 안으로 들어가 있었다 -->
+    <div class="fold-head" style="margin:4px 2px 10px" onclick="toggleStAdv()">
+      <span style="font-weight:800;font-size:.92rem">🛠 고급 · 데이터 관리</span>
+      <span class="link">가져오기 · 복원 · 초기화<span class="ag-caret" id="st-adv-caret">▾</span></span></div>
+    <div id="st-adv" style="display:none">
+    <div class="grid2" style="margin-bottom:10px">
+      <button class="btn ghost" onclick="openFixCheckModal()">🔧 고정수입 바로잡기</button>
+      <button class="btn ghost" onclick="openFxModal()">💵 환율 ${fxRate().toLocaleString()}원</button>
     </div>
-    <button class="btn ghost block" style="margin-bottom:14px" onclick="openWizard()">🚚 쓰던 걸 그대로 옮기기 (남은 카드값·실적·할부)</button>
+    <button class="btn ghost block" style="margin-bottom:10px" onclick="openWizard()">🚚 쓰던 걸 그대로 옮기기 (남은 카드값·실적·할부)</button>
+    <div class="grid2" style="margin-bottom:10px">
+      <button class="btn ghost" onclick="exportData()">데이터 내보내기</button>
+      <button class="btn ghost" onclick="$('st-file').click()">가져오기</button>
+    </div>
+    <input type="file" id="st-file" accept=".json" style="display:none" onchange="importData(this)">
+    <button class="btn ghost block" style="margin-bottom:10px" onclick="openVersionsModal()">⏱️ 버전 복원 (타임머신)</button>
     <div class="field"><label>Gemini API 키 ${(window.Sync&&Sync.aiReady&&Sync.aiReady())?'(선택 · 클라우드 로그인 시 불필요)':'(무료)'}</label>
       <input id="st-key" type="password" placeholder="AIza…" value="${esc(S.settings.gemini)}">
       <div class="tiny" style="margin-top:5px">${(window.Sync&&Sync.aiReady&&Sync.aiReady())?'☁️ 클라우드에 로그인돼 있어 <b>서버에 등록된 키</b>로 AI가 동작해요 — 이 칸은 비워둬도 됩니다.':'Google AI Studio(aistudio.google.com)에서 무료 발급 → 리포트 AI 해설이 켜져요. 키는 이 기기에만 저장됩니다.'}</div>
       ${S.settings.aiErr?`<div class="card tight" style="background:var(--terra-soft);border-color:var(--terra-line);margin-top:9px">
         <div style="font-size:.82rem;font-weight:700;color:var(--terra-deep)">⚠️ 최근 AI 호출 실패 — ${esc(S.settings.aiErr)}</div>
         <div class="tiny" style="margin-top:4px;color:var(--sub)">AI 없이도 리포트·브리핑은 규칙 기반으로 정상 생성돼요.</div></div>`:''}</div>
-    <button class="btn primary block" onclick="S.settings.gemini=$('st-key').value.trim();save();closeModal();toast('저장했어요')">저장</button>
-    <div class="divider"></div>
-    <button class="btn ghost block" style="margin-bottom:10px" onclick="openFxModal()">💵 환율 설정 (1$ = ${fxRate().toLocaleString()}원)</button>
-    <div class="grid2">
-      <button class="btn ghost" onclick="exportData()">데이터 내보내기</button>
-      <button class="btn ghost" onclick="$('st-file').click()">가져오기</button>
-    </div>
-    <input type="file" id="st-file" accept=".json" style="display:none" onchange="importData(this)">
-    <button class="btn ghost block" style="margin-top:10px" onclick="openVersionsModal()">⏱️ 버전 복원 (타임머신)</button>
+    <button class="btn primary block" onclick="S.settings.gemini=$('st-key').value.trim();save();closeModal();toast('저장했어요')">API 키 저장</button>
     <div class="divider"></div>
     <button class="btn ghost block" style="color:var(--danger)" onclick="openResetModal()">전체 초기화</button>
+    </div>
     <div class="tiny" style="text-align:center;margin-top:14px">Claude Flow Pro · <span class="num">${APP_BUILD}</span><br>클라우드 동기화를 켜지 않으면 데이터는 이 기기에만 저장됩니다</div>`);
   refreshPushBtn();
+}
+/* 고급 묶음은 설정창을 열 때마다 접힌 채로 시작한다 — '늘 치워져 있어야' 치운 의미가 있다 */
+function toggleStAdv(){
+  const el=$('st-adv'); if(!el)return;
+  const on=el.style.display==='none';
+  el.style.display=on?'':'none';
+  const c=$('st-adv-caret'); if(c)c.textContent=on?'▴':'▾';
 }
 /* ═════════ 전체 초기화 (클라우드 인식) ═════════ */
 function openResetModal(){

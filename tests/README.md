@@ -38,6 +38,7 @@ node tests/run.mjs prepay ui    # 이름에 그 글자가 든 것만
 | `prepay` | 선결제 — 매주 자동·건별·잔액 부족 보류 |
 | `start` | 개시 스냅샷·진행 중 할부·시작 마법사·할부 혜택 제외 |
 | `home` `ui` `pc` | 홈 3단 구조, 화면 정리, 넓은 화면 배치 |
+| `simple` | 간편 단순화 — 보러 온 것이 먼저 오는지, 접어도 결론은 남는지, 펴면 그대로 돌아오는지 |
 | `feat` `feat2` `inv` `flow` | 순자산 흐름·리밸런싱·목표, 투자 수수료·환전, 현금흐름 |
 | `click` | 실제 DOM 클릭 (3개 기기) — `onclick` 이 깨져도 조용히 지나가지 않게 |
 | `subpath` | GitHub Pages 하위 경로(`/Claude-Flow/`) 배포 |

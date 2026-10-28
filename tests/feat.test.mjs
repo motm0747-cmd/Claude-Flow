@@ -43,17 +43,20 @@ r = await p.evaluate(() => {
 });
 ok('배분 집계', r.tot===10000000&&r.cash===3000000&&r.safe===5000000&&r.invest===2000000, JSON.stringify(r));
 
-r = await p.evaluate(() => { switchView('assets'); return $('alloc-card').textContent; });
+/* 배분 카드는 이제 자산 탭 아래에 접혀 있다 (내 계좌가 먼저 와야 하므로).
+   여기서 보는 건 '계산과 문구가 맞는가' 이므로 펼친 상태로 읽는다.
+   접혔을 때 무엇이 남는지는 simple 묶음이 따로 본다. */
+r = await p.evaluate(() => { S.settings.fold={alloc:1}; switchView('assets'); return $('alloc-card').textContent; });
 ok('목표 미설정 시 안내', r.includes('목표 정하기')&&r.includes('30%'), r.slice(0,60));
 
 r = await p.evaluate(() => {
-  S.alloc={cash:30,safe:50,invest:20}; save(); switchView('assets');
+  S.alloc={cash:30,safe:50,invest:20}; S.settings.fold={alloc:1}; save(); switchView('assets');
   return $('alloc-card').textContent;
 });
 ok('목표대로면 제안 없음', r.includes('잘 맞춰져'), r.slice(-60));
 
 r = await p.evaluate(() => {
-  S.alloc={cash:10,safe:30,invest:60}; save(); switchView('assets');
+  S.alloc={cash:10,safe:30,invest:60}; S.settings.fold={alloc:1}; save(); switchView('assets');
   return $('alloc-card').textContent;
 });
 // 투자 목표 60% = 600만, 현재 200만 → 400만 옮겨야

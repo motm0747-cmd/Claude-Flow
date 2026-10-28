@@ -53,7 +53,7 @@ const SUITES = [
   'smoke.mjs', 'invariants.mjs', 'fmt.test.mjs', 'sync.test.mjs', 'edge.test.mjs', 'catchup.test.mjs', 'aftercard.test.mjs',
   'cats.test.mjs', 'entry.test.mjs', 'q.test.mjs', 'money.test.mjs', 'daily.test.mjs', 'refund.test.mjs',
   'perk.test.mjs', 'exempt.test.mjs', 'prepay.test.mjs', 'hana.check.mjs',
-  'home.test.mjs', 'ui.test.mjs', 'start.test.mjs', 'feat.test.mjs', 'feat2.test.mjs',
+  'home.test.mjs', 'ui.test.mjs', 'simple.test.mjs', 'start.test.mjs', 'feat.test.mjs', 'feat2.test.mjs',
   'inv.test.mjs', 'flow.test.mjs', 'final.mjs',
   'click.test.mjs', 'pc.test.mjs', 'subpath.test.mjs', 'audit.mjs',
   'robust.test.mjs', 'newphone.test.mjs',
