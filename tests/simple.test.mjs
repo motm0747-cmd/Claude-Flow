@@ -176,7 +176,8 @@ const hOf = (view, sel) => p.evaluate(({ v, s }) => {
     const vis = [...sh.querySelectorAll('button')].filter((e) => e.offsetParent).map((e) => e.textContent.trim());
     return { btns: vis, file: !!document.getElementById('st-file'), key: !!document.getElementById('st-key') };
   });
-  const want = ['고정수입', '환율', '쓰던 걸', '내보내기', '가져오기', '타임머신', '전체 초기화'];
+  /* 환율은 달러를 쓸 때만 나오므로 여기 목록에 없다 — ⑤-c 가 따로 본다 */
+  const want = ['고정수입', '쓰던 걸', '내보내기', '가져오기', '타임머신', '전체 초기화'];
   for (const w of want) ok(`  고급 안: ${w}`, r.btns.some((t) => t.includes(w)), r.btns.join(' / '));
   ok('  가져오기 파일칸도 살아 있다', r.file);
   ok('  Gemini 키칸도 거기 있다', r.key);
@@ -223,7 +224,89 @@ const hOf = (view, sel) => p.evaluate(({ v, s }) => {
   ok('  몇 건 남았는지 말한다', /\/10건/.test(r.txt), JSON.stringify(r.txt));
 }
 
-/* ══════ ⑤ 접기가 다른 계산을 건드리지 않는다 ══════ */
+/* ══════ ⑤ 안 쓰는 묶음은 제목째로 내려간다 ══════
+ *
+ * 투자를 안 쓰는 사람에게 투자 기능이 '실제로' 얼마나 보이는지 재어보니,
+ * 배너·수익률·DCA·환율칩은 이미 전부 자동으로 숨고 있었고 남은 건
+ * 자산 탭 한가운데의 '투자 0원 ▾' 머리와 총자산 부제의 '· 투자 0원' 뿐이었다.
+ * 그래서 코드를 들어내는 대신 그 둘을 치운다 — 계좌를 만들면 그대로 돌아온다.
+ * 돌아오는지까지 같이 보는 게 이 묶음의 핵심이다. */
+{
+  await p.evaluate(() => {
+    S.accounts = [{ id: 'chk', type: 'checking', name: '주거래', balance: 2400000, cur: 'KRW' },
+      { id: 'sv', type: 'saving', name: '비상금', balance: 8000000, cur: 'KRW' }];
+    S.cards = []; S.invLogs = []; S.goals = []; S.debts = [];
+    S.fixed = [{ id: 'f1', name: '월세', amount: 750000, day: 25, cat: '주거/통신', kind: 'expense' }];
+    delete S.alloc; S.settings.dcaM = 0; S.settings.fold = {};
+    _discInvalidate(); save(); renderAll(); switchView('assets');
+  });
+  await p.waitForTimeout(450);
+  const r = await ev(() => {
+    const root = document.getElementById('view-assets');
+    const vis = (e) => e.offsetParent !== null;
+    const heads = [...root.querySelectorAll('.ag-head')].filter(vis).map((e) => e.textContent.trim());
+    const rows = [...root.querySelectorAll('.add-row')].filter(vis);
+    return { heads, rows: rows.length,
+      chips: rows.flatMap((x) => [...x.querySelectorAll('.add-chip')].map((c) => c.textContent.trim())),
+      sub: document.getElementById('a-total-sub').textContent,
+      total: totalAssets() };
+  });
+  ok('투자 계좌가 없으면 "투자" 묶음 머리가 없다', !r.heads.some((t) => /^투자/.test(t)), r.heads.join(' / '));
+  ok('  대신 "＋ 투자 계좌" 칩으로만 남는다', r.chips.some((t) => /투자 계좌/.test(t)), r.chips.join(' / '));
+  ok('  칩 줄이 둘로 갈리지 않는다', r.rows <= 2, `${r.rows}줄`);
+  ok('  총자산 부제에 "투자 0원" 이 없다', !/투자/.test(r.sub), r.sub);
+  ok('  0원인 칸은 아예 적지 않는다', !/0원/.test(r.sub), r.sub);
+  ok('  총자산은 그대로', r.total === 10400000, String(r.total));
+}
+
+/* ══════ ⑤-b 투자 계좌를 만들면 묶음이 통째로 돌아온다 (기능 상실이 아니다) ══════ */
+{
+  await p.evaluate(() => {
+    S.accounts.push({ id: 'iv', type: 'invest', name: '연금저축', balance: 5000000, cur: 'KRW' });
+    _discInvalidate(); save(); renderAll(); switchView('assets');
+  });
+  await p.waitForTimeout(450);
+  const r = await ev(() => {
+    const root = document.getElementById('view-assets');
+    const vis = (e) => e.offsetParent !== null;
+    return { heads: [...root.querySelectorAll('.ag-head')].filter(vis).map((e) => e.textContent.trim()),
+      list: (document.getElementById('list-invest') || {}).innerText || '',
+      slots: ['inv-alert', 'invperf-card', 'dca-card'].filter((id) => document.getElementById(id)),
+      sub: document.getElementById('a-total-sub').textContent,
+      total: totalAssets() };
+  });
+  ok('투자 계좌를 만들면 "투자" 묶음이 돌아온다', r.heads.some((t) => /^투자/.test(t)), r.heads.join(' / '));
+  ok('  계좌가 목록에 보인다', /연금저축/.test(r.list), JSON.stringify(r.list.slice(0, 40)));
+  ok('  수익률·DCA 칸도 같이 돌아온다', r.slots.length === 3, r.slots.join(','));
+  ok('  총자산 부제에 투자가 다시 적힌다', /투자/.test(r.sub), r.sub);
+  ok('  잔액이 총자산에 들어간다', r.total === 15400000, String(r.total));
+}
+
+/* ══════ ⑤-c 환율은 달러를 쓸 때만 ══════ */
+{
+  await p.evaluate(() => {
+    S.accounts = S.accounts.filter((a) => a.type !== 'invest');
+    S.invLogs = []; save(); renderAll(); openSettings(); toggleStAdv();
+  });
+  await p.waitForTimeout(400);
+  const off = await ev(() => [...document.querySelectorAll('#sheet button')]
+    .filter((e) => e.offsetParent).map((e) => e.textContent.trim()));
+  ok('달러가 없으면 설정에 환율 버튼이 없다', !off.some((t) => /환율/.test(t)), off.join(' / '));
+  ok('  고정수입 바로잡기는 그대로 있다', off.some((t) => /고정수입/.test(t)));
+
+  await p.evaluate(() => {
+    closeModal();
+    S.accounts.push({ id: 'us', type: 'invest', name: '해외주식', balance: 1000, cur: 'USD' });
+    save(); renderAll(); openSettings(); toggleStAdv();
+  });
+  await p.waitForTimeout(400);
+  const on = await ev(() => [...document.querySelectorAll('#sheet button')]
+    .filter((e) => e.offsetParent).map((e) => e.textContent.trim()));
+  ok('달러 계좌가 생기면 환율 버튼이 돌아온다', on.some((t) => /환율/.test(t)), on.join(' / '));
+  await p.evaluate(() => closeModal());
+}
+
+/* ══════ ⑥ 접기가 다른 계산을 건드리지 않는다 ══════ */
 {
   await seed();
   const snap = () => ev(() => ({ safe: safeSpend().usable, net: netAssets(), tot: totalAssets(),

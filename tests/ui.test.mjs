@@ -68,7 +68,10 @@ r = await p.evaluate(() => {
     chips: [...document.querySelectorAll('.add-chip')].map(e => e.innerText.trim()),
     empties: [...document.querySelectorAll('#view-assets .empty')].map(e => e.innerText.slice(0, 20)) };
 });
-ok('묶음 3개로 정리', r.heads.length === 3, r.heads.join(' / '));
+/* 묶음 머리는 '내용이 있는 묶음' 만 — 투자처럼 통째로 비어 있으면 머리도 없이
+   맨 아래 추가 칩으로만 남는다. ('투자 0원 ▾' 가 자산 탭 한가운데 있었다) */
+ok('내용이 있는 묶음만 제목이 보임', r.heads.join('/') === '현금 · 저축/계획 · 관리', r.heads.join(' / '));
+ok('  빈 묶음은 추가 칩으로만 남음', r.chips.some(c => /투자 계좌/.test(c)), r.chips.join(' / '));
 ok('  안 쓰는 분류는 제목이 안 보임',
    !r.secs.some(s => /^(예금|적금 · 묶인 돈|주택청약|저축 목표|받을 돈|고정 수입|투자)/.test(s)), r.secs.join(' / '));
 ok('  남은 제목은 실제로 쓰는 것뿐', r.secs.join('/') === '입출금 · 현금성/고정비/잔액 대조', r.secs.join(' / '));

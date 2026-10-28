@@ -933,7 +933,7 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;bac
 
 <script>
 /* ═════════ 데이터 & 저장 ═════════ */
-const APP_BUILD='20261028-simple';
+const APP_BUILD='20261028-simple2';
 const KEY='claudeflow_v1';
 const BROKEN_KEY='claudeflow_broken';   // 읽지 못한 원본을 옮겨 두는 곳(복구용)
 const store={
@@ -2736,31 +2736,45 @@ function toggleAssetGroup(k){
   S.settings.assetOpen=Object.assign({},S.settings.assetOpen,{[k]:!assetGroupOpen(g)});
   save(); renderAssets();
 }
+/* 아직 아무것도 없는 묶음은 제목째로 내린다.
+ * 투자를 안 쓰는 사람에게 '투자 0원 ▾' 머리가 남아 있었다 — 눌러봐야 칩 하나뿐인데
+ * 자산 탭 한가운데 자리를 차지했다. 이 앱이 이미 쓰고 있는 규칙("안 쓰는 분류는
+ * 제목째로 숨기고 아래 추가 칩으로만 남긴다")을 묶음 단위에도 적용한다.
+ * 지우는 게 아니므로 계좌를 하나 만들면 그 자리에 그대로 돌아온다. */
+const groupLive=g=>g.secs.some(s=>s.always||s.has());
+const addChip=s=>`<button class="add-chip" onclick="${s.add}">＋ ${s.chip}</button>`;
 function assetGroupsHTML(){
-  return ASSET_GROUPS.map(g=>{
+  const live=ASSET_GROUPS.filter(groupLive);
+  /* 빈 묶음의 칩은 마지막 묶음의 추가 줄에 함께 넣는다 —
+     칩 줄이 둘로 갈려 쌓이면 한 줄이 잘못 끼어든 것처럼 보인다 */
+  const idleChips=ASSET_GROUPS.filter(g=>!groupLive(g)).flatMap(g=>g.secs.map(addChip));
+  return live.map((g,i)=>{
     const open=assetGroupOpen(g);
     const shown=g.secs.filter(s=>s.always||s.has());
     const missing=g.secs.filter(s=>!s.always&&!s.has());
+    const tail=i===live.length-1?idleChips:[];
     // 합계와 화살표는 이름 바로 옆에 둔다 — 넓은 화면에서 제목이 단 전체를 가로지르면
     // 오른쪽 끝으로 밀린 숫자가 어느 묶음 것인지 알아보기 어렵다
     const sum=g.sum?`<span class="num">${fmtK(g.sum())}원</span>`:'';
     const head=`<div class="sec-title ag-head" onclick="toggleAssetGroup('${g.k}')">
       <span class="ag-name">${g.name}</span><span class="link">${sum}<span class="ag-caret">${open?'▴':'▾'}</span></span></div>`;
-    if(!open)return head;
+    const row=cs=>cs.length?`<div class="add-row">${cs.join('')}</div>`:'';
+    if(!open)return head+row(tail);
     const body=shown.map(s=>
       `<div class="sec-title">${s.label} <span class="link" onclick="event.stopPropagation();${s.add}">${s.addLabel||'+ 추가'}</span></div>`
       +s.slots.map(id=>`<div class="card tight" id="${id}"></div>`).join('')
     ).join('');
-    const addRow=missing.length?`<div class="add-row">${missing.map(s=>
-      `<button class="add-chip" onclick="${s.add}">＋ ${s.chip}</button>`).join('')}</div>`:'';
-    return head+body+addRow;
+    return head+body+row(missing.map(addChip).concat(tail));
   }).join('');
 }
 function renderAssets(){
   $('a-total').textContent=fmt(totalAssets());
   const inv=accsOf('invest').reduce((s,a)=>s+accKRW(a),0);
   const locked=S.accounts.filter(a=>a.type==='saving'||a.type==='deposit'||a.type==='housing').reduce((s,a)=>s+accKRW(a),0);
-  $('a-total-sub').textContent=`유동 ${fmtK(totalAssets()-inv-locked)}원 · 예적금 ${fmtK(locked)}원 · 투자 ${fmtK(inv)}원`;
+  // 0원인 칸은 적지 않는다 — 안 쓰는 분류를 굳이 '0원' 으로 알릴 이유가 없다
+  $('a-total-sub').textContent=[['유동',totalAssets()-inv-locked],['예적금',locked],['투자',inv]]
+    .filter(([,v])=>v)
+    .map(([k,v])=>`${k} ${fmtK(v)}원`).join(' · ');
   // 빈 상자를 먼저 깔아두면 아래 render 함수들이 자기 자리를 찾아 채운다
   $('asset-groups').innerHTML=assetGroupsHTML();
   for(const type of['checking','deposit','saving','housing','invest']){
@@ -6486,10 +6500,11 @@ function applyRecon(items){
 }
 
 /* ═════════ v5-3: 환율 UI ═════════ */
+/* 환율을 쓸 데가 있는가 — 자산 탭 칩과 설정의 환율 버튼이 같은 기준을 봐야 한다 */
+const hasFx=()=>S.accounts.some(a=>a.cur==='USD')||(S.invLogs||[]).some(l=>l.cur==='USD');
 function renderFxChip(){
   const el=$('fx-chip-slot'); if(!el)return;
-  const hasUSD=S.accounts.some(a=>a.cur==='USD')||S.invLogs.some(l=>l.cur==='USD');
-  if(!hasUSD){el.innerHTML='';return}
+  if(!hasFx()){el.innerHTML='';return}
   const f=S.settings.fx;
   const stale=f.at&&f.at!==todayStr();
   if(f.err){
@@ -7099,10 +7114,11 @@ function openSettings(){
       <span style="font-weight:800;font-size:.92rem">🛠 고급 · 데이터 관리</span>
       <span class="link">가져오기 · 복원 · 초기화<span class="ag-caret" id="st-adv-caret">▾</span></span></div>
     <div id="st-adv" style="display:none">
-    <div class="grid2" style="margin-bottom:10px">
+    <!-- 환율은 달러 계좌·기록이 있을 때만 쓸 데가 있다 -->
+    ${hasFx()?`<div class="grid2" style="margin-bottom:10px">
       <button class="btn ghost" onclick="openFixCheckModal()">🔧 고정수입 바로잡기</button>
       <button class="btn ghost" onclick="openFxModal()">💵 환율 ${fxRate().toLocaleString()}원</button>
-    </div>
+    </div>`:`<button class="btn ghost block" style="margin-bottom:10px" onclick="openFixCheckModal()">🔧 고정수입 바로잡기</button>`}
     <button class="btn ghost block" style="margin-bottom:10px" onclick="openWizard()">🚚 쓰던 걸 그대로 옮기기 (남은 카드값·실적·할부)</button>
     <div class="grid2" style="margin-bottom:10px">
       <button class="btn ghost" onclick="exportData()">데이터 내보내기</button>
