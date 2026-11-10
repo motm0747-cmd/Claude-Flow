@@ -40,7 +40,9 @@
   var ID_LISTS = ['tx', 'accounts', 'cards', 'fixed', 'goals', 'debts', 'invLogs',
                   'wish', 'quick', 'recon', 'askLog'];
   // 키(YYYY-MM 등)로 찾는 맵들
-  var KEY_MAPS = ['reports', 'briefs', 'budgets', 'netHist', 'scores', 'autoLog'];
+  // settings 도 여기 둔다 — 한 덩어리로 비교하면 폰에서 '남겨둘 돈' 을, PC 에서 화면 보기를
+  // 바꾸기만 해도 한쪽이 통째로 사라진다. 항목별로 보면 서로 다른 설정은 둘 다 남는다.
+  var KEY_MAPS = ['reports', 'briefs', 'budgets', 'netHist', 'scores', 'autoLog', 'settings'];
 
   var eq = function (a, b) { return JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b); };
   var byId = function (arr) {
@@ -68,6 +70,36 @@
     return theirs;                                 // 둘 다 바꿈 → 서버 쪽을 택하고 개수를 보고한다
   }
 
+  /* 같은 레코드를 양쪽이 모두 고쳤을 때 — 칸별로 본다.
+   *
+   * 레코드를 통째로 비교하면 '폰은 이름을, PC 는 잔액을' 바꾼 것도 충돌이 되어 한쪽이
+   * 사라진다. 칸별로 보면 서로 다른 칸은 둘 다 살릴 수 있다.
+   *
+   * 계좌 잔액은 한 걸음 더 간다. 잔액은 '값' 이 아니라 거래가 쌓인 '합' 이라서,
+   * 양쪽이 각자 지출을 적으면 둘 다 잔액을 바꾼다. 여기서 한쪽을 고르면 거래는 양쪽 다
+   * 남는데 잔액은 한쪽만 깎여 내역과 잔액이 조용히 어긋난다. 그래서 변화량을 더한다
+   *   합친 잔액 = 기준 + (내 변화) + (상대 변화)
+   * 반환: { v: 합친 레코드, clash: 같은 칸을 서로 다르게 고친 게 있었는가 } */
+  function mergeRec(listKey, base, mine, theirs) {
+    var out = {}, clash = false, ks = {};
+    [base, mine, theirs].forEach(function (o) { Object.keys(o || {}).forEach(function (k) { ks[k] = 1; }); });
+    Object.keys(ks).forEach(function (k) {
+      var b = base[k], m = mine[k], t = theirs[k], v;
+      if (eq(m, t)) v = m;
+      else if (eq(b, m)) v = t;
+      else if (eq(b, t)) v = m;
+      else if (listKey === 'accounts' && k === 'balance' &&
+               typeof b === 'number' && typeof m === 'number' && typeof t === 'number' &&
+               isFinite(b) && isFinite(m) && isFinite(t)) {
+        v = Math.round((b + (m - b) + (t - b)) * 100) / 100;      // 달러 계좌는 센트까지
+      }
+      else { v = t; clash = true; }                 // 같은 칸을 다르게 고침 → 서버 쪽
+      if (v !== undefined) out[k] = v;
+    });
+    return { v: out, clash: clash };
+  }
+  var isRec = function (x) { return !!x && typeof x === 'object' && !Array.isArray(x); };
+
   /* base·mine·theirs 를 합친다. 두 번째 반환값은 사용자에게 보여줄 요약. */
   function merge3(base, mine, theirs) {
     var noBase = (base == null);                   // 기준을 아직 한 번도 저장하지 못한 기기
@@ -84,6 +116,14 @@
         [mb, mm, mt].forEach(function (o) { Object.keys(o).forEach(function (i) { ids[i] = 1; }); });
         var list = [];
         Object.keys(ids).forEach(function (i) {
+          // 셋 다 있고 양쪽이 모두 고쳤으면 칸별로 합친다 (기준이 있을 때만 — 없으면 누가 새 값인지 모른다)
+          if (!noBase && isRec(mb[i]) && isRec(mm[i]) && isRec(mt[i]) &&
+              !eq(mm[i], mt[i]) && !eq(mb[i], mm[i]) && !eq(mb[i], mt[i])) {
+            var r = mergeRec(k, mb[i], mm[i], mt[i]);
+            list.push(r.v);
+            if (r.clash) sum.clashed++;
+            return;
+          }
           var v = pick3(mb[i], mm[i], mt[i], noBase);
           if (v === undefined) { if (mb[i] !== undefined) sum.removed++; return; }
           list.push(v);
@@ -355,7 +395,14 @@
 
           // 3) 리비전 비교 — 초기화(빈 상태)도 하나의 정상 리비전으로 취급
           if (remoteRev > self.knownRev) {
-            // 원격이 더 최신 → 로컬 백업 후 채택 (비어 있으면 이 기기도 초기화됨)
+            /* 원격이 더 최신. 그런데 이 기기에 **아직 못 올린 기록**이 있을 수 있다 —
+               오프라인에서 적었거나, 적자마자 앱을 닫아 업로드가 끊긴 경우다.
+               예전엔 여기서 묻지 않고 서버 것으로 덮어 그 기록이 사라졌다.
+               마지막으로 맞춘 시점(base)과 지금 로컬이 다르면 올릴 게 남은 것이므로 합친다.
+               기준이 없는 기기(처음 로그인)는 예전대로 서버를 따르고 백업을 남긴다. */
+            // 단, 서버가 비어 있으면 다른 기기에서 일부러 '전체 초기화' 한 것이다 — 합치면
+            // 지운 데이터가 이 기기에서 되살아나 다시 올라간다. 그때는 그대로 따른다(백업은 남긴다).
+            if (!self.isEmpty(row.data) && self._unsynced(local)) return self._mergeDown(local, row, applyToApp);
             if (!self.isEmpty(local)) self.backupLocal(local);
             return self.adopt(row, applyToApp);
           } else if (remoteRev < self.knownRev) {
@@ -366,10 +413,28 @@
             // 같은 리비전 = 로컬과 클라우드가 같은 시점. 그게 바로 다음 병합의 기준이다.
             // (예전 버전에서 올라온 기기는 이 경로로 기준을 처음 확보한다)
             try { localStorage.setItem(BASE_KEY, JSON.stringify(row.data)); } catch (e) {}
+            /* 리비전이 같아도 로컬이 서버와 다르면 못 올린 기록이 남은 것이다.
+               '올릴 게 있다' 는 표시(dirty)는 메모리에만 있어 앱을 다시 켜면 잊는다 —
+               여기서 '동기화됨' 을 띄우면 다른 기기에는 영영 안 보인다. 마저 올린다. */
+            if (!self.isEmpty(local) && !eq(row.data, local)) { self.dirty = true; return self.push(true); }
             self.setStatus('synced');
           }
         })
         .catch(function (e) { self.setStatus('error', self._msg(e)); });
+    },
+
+    /* 이 기기에 아직 못 올린 변경이 있는가 — 마지막으로 맞춘 시점(base)과 비교한다 */
+    _unsynced: function (local) {
+      if (this.isEmpty(local)) return false;
+      var base = this.readBase();
+      return base != null && !eq(base, local);
+    },
+    /* 받아오다가 합치기. 합친 결과가 서버 것과 같으면(내 쪽에 올릴 게 사실상 없으면)
+       쓰지 않고 받아오기만 한다 — 안 그러면 기기끼리 서로 다시 올리며 맴돈다. */
+    _mergeDown: function (local, row, applyToApp) {
+      var merged = merge3(this.readBase(), local, row.data);
+      if (eq(merged.data, row.data)) return this.adopt(row, applyToApp);
+      return this._resolveConflict(local, row, true);
     },
 
     adopt: function (row, applyToApp) {
@@ -490,7 +555,7 @@
     readBase: function () { try { return JSON.parse(localStorage.getItem(BASE_KEY) || 'null'); } catch (e) { return null; } },
 
     /* 동시 편집 — 양쪽을 합쳐서 다시 올린다. 무엇이 합쳐졌는지는 사용자에게 알린다. */
-    _resolveConflict: function (local, row) {
+    _resolveConflict: function (local, row, quiet) {
       var self = this;
       var theirs = row.data;
       if (theirs == null) {                        // 서버가 값을 못 준 경우 → 받아와서 다시 시도
@@ -510,11 +575,15 @@
           self._retry = 0;
           try { localStorage.setItem(DATA_KEY, JSON.stringify(merged.data)); } catch (e) {}
           self._afterPush(merged.data, r2.rev);
+          /* 무엇을 합쳤는지 앱에 넘긴다. 같은 자동 기록(이번 달 월세 등)을 두 기기가 각자
+             넣었으면 합친 뒤 두 건이 되는데, 그걸 알아보고 정리하는 건 앱의 몫이다. */
           if (typeof window.reloadStateFromStorage === 'function') {
-            try { window.reloadStateFromStorage(); } catch (e) {}
+            try { window.reloadStateFromStorage({ base: base, mine: local, theirs: theirs }); } catch (e) {}
           }
           self.lastMerge = s;
-          self._emitMerge(s);
+          /* 받아오다 합친 경우(quiet)는 평소의 동기화다 — 서로 다른 기록이 합쳐진 것뿐이면
+             알릴 일이 아니다. 같은 칸을 서로 다르게 고쳐 한쪽을 버렸을 때만 말한다. */
+          if (!quiet || s.clashed || s.fields.length) self._emitMerge(s);
         });
     },
 

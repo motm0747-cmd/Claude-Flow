@@ -369,3 +369,148 @@ const TX = (id, memo) => ({ id, type: 'expense', date: '2026-09-15', amount: 100
   ok('  되돌리면 앱 기본으로 돌아온다', back.builtin === true && !back.overridden, back.url);
   ok('  기기에 저장된 설정도 지워진다', !store['claudeflow_sync_cfg'], store['claudeflow_sync_cfg'] || '없음');
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * 아래부터는 "받아올 때(pull)" 의 구멍.
+ *
+ * 위의 보호는 전부 '올릴 때' 만 걸려 있었다. 그런데 앱을 열면 먼저 **받아오고**,
+ * 그 경로는 서버 리비전이 높기만 하면 이 기기 것을 통째로 덮었다.
+ * 못 올린 기록이 있어도 — 오프라인에서 적었거나, 적자마자 앱을 닫아 업로드가
+ * 끊겼거나(iOS 는 백그라운드로 가면 진행 중인 요청을 끊는다) — 묻지 않고 사라졌다.
+ * '올릴 게 남았는지' 도 메모리에만 있어서 앱을 다시 켜면 잊었다.
+ * ═══════════════════════════════════════════════════════════════════════ */
+const ACC1 = (bal) => [{ id: 'a1', type: 'checking', name: '통장', balance: bal, cur: 'KRW' }];
+
+/* ══════ ⑫ 못 올린 기록이 있는데 다른 기기가 먼저 올렸다 ══════ */
+{
+  const log = [], srv = makeServer();
+  const start = { tx: [TX('t1', '기존')], accounts: ACC1(10000), settings: {} };
+  // PC 가 먼저 올려 서버는 rev 6
+  srv.row.data = { ...start, tx: [TX('t1', '기존'), TX('t3', 'PC에서 추가')], accounts: ACC1(9000) };
+  srv.row.rev = 6;
+  // 폰: rev 5 에서 한 건 적고 못 올린 채 앱이 닫혔다 → 다시 열면 dirty 는 false 다
+  const phone = makeDevice('폰', srv, log, {
+    data: { ...start, tx: [TX('t1', '기존'), TX('t2', '폰에서 추가')], accounts: ACC1(8000) },
+    rev: 5, base: start });
+  phone.Sync.dirty = false;
+  let ctx = null, reloads = 0;
+  phone.ctx.window.reloadStateFromStorage = (c) => { reloads++; ctx = c || null; };
+  await phone.Sync.pull(true);
+
+  const ids = phone.read().tx.map((t) => t.id).sort().join(',');
+  ok('받아올 때 못 올린 기록이 사라지지 않는다', ids === 't1,t2,t3', ids);
+  ok('  합친 결과가 서버에도 올라간다',
+    srv.row.rev === 7 && srv.row.data.tx.map((t) => t.id).sort().join(',') === 't1,t2,t3',
+    `rev=${srv.row.rev} ${srv.row.data.tx.map((t) => t.id).join(',')}`);
+  ok('  잔액은 양쪽 변화를 모두 반영한다 (10000 −1000 −2000)',
+    phone.read().accounts[0].balance === 7000, String(phone.read().accounts[0].balance));
+  ok('  화면을 다시 그린다', reloads === 1, `reload ${reloads}회`);
+  ok('  앱에 무엇을 합쳤는지 넘겨준다 (중복 자동기록 정리용)',
+    !!ctx && !!ctx.base && !!ctx.mine && !!ctx.theirs
+      && ctx.mine.tx.some((t) => t.id === 't2') && ctx.theirs.tx.some((t) => t.id === 't3'),
+    ctx ? Object.keys(ctx).join(',') : '없음');
+}
+
+/* ══════ ⑫-b 올릴 게 없으면 그냥 받아온다 — 쓸데없이 다시 올리지 않는다 ══════ */
+{
+  const log = [], srv = makeServer();
+  const start = { tx: [TX('t1', '기존')], accounts: ACC1(10000), settings: {} };
+  srv.row.data = { ...start, tx: [TX('t1', '기존'), TX('t3', 'PC에서 추가')] }; srv.row.rev = 6;
+  const phone = makeDevice('폰', srv, log, { data: start, rev: 5, base: start });
+  phone.Sync.dirty = false;
+  await phone.Sync.pull(true);
+  ok('내 쪽 변경이 없으면 받아오기만 한다', phone.read().tx.length === 2 && srv.row.rev === 6,
+    `거래 ${phone.read().tx.length}건 rev=${srv.row.rev}`);
+  ok('  서버에 쓰지 않았다', !log.some((l) => /저장|생성/.test(l)), log.join(' | ') || '쓰기 없음');
+}
+
+/* ══════ ⑫-c 합쳤는데 결과가 서버 것과 같으면 올리지 않는다 (기기끼리 핑퐁 방지) ══════ */
+{
+  const log = [], srv = makeServer();
+  const start = { tx: [TX('t1', '기존')], accounts: ACC1(10000), settings: {} };
+  const both = { ...start, tx: [TX('t1', '기존'), TX('t3', '같은 변경')] };
+  srv.row.data = both; srv.row.rev = 6;
+  const phone = makeDevice('폰', srv, log, { data: both, rev: 5, base: start });
+  phone.Sync.dirty = false;
+  await phone.Sync.pull(true);
+  ok('합친 결과가 서버와 같으면 쓰지 않는다', srv.row.rev === 6 && phone.Sync.knownRev === 6,
+    `서버 rev=${srv.row.rev} · 기기 rev=${phone.Sync.knownRev}`);
+}
+
+/* ══════ ⑬ 리비전은 같은데 못 올린 기록이 남아 있다 ══════
+   적자마자 앱을 닫으면 1.5초 뒤로 미뤄둔 업로드가 실행되지 못한다. 다시 열었을 때
+   리비전이 같다고 '동기화됨' 을 띄우면, 다른 기기에는 영영 안 보인다. */
+{
+  const log = [], srv = makeServer();
+  const start = { tx: [TX('t1', '기존')], accounts: ACC1(10000), settings: {} };
+  srv.row.data = start; srv.row.rev = 5;
+  const phone = makeDevice('폰', srv, log, {
+    data: { ...start, tx: [TX('t1', '기존'), TX('t2', '올리다 만 것')] }, rev: 5, base: start });
+  phone.Sync.dirty = false;                       // 앱을 다시 켰다
+  await phone.Sync.pull(true);
+  ok('다시 열면 못 올린 기록을 마저 올린다',
+    srv.row.rev === 6 && srv.row.data.tx.some((t) => t.id === 't2'),
+    `rev=${srv.row.rev} ${srv.row.data.tx.map((t) => t.id).join(',')}`);
+}
+
+/* ══════ ⑭ 두 기기가 같은 통장에서 각자 썼다 — 잔액이 한쪽 것만 남으면 안 된다 ══════
+   예전엔 계좌 레코드를 통째로 비교해서, 둘 다 잔액을 바꿨으면 서버 쪽을 택했다.
+   거래는 양쪽 다 남는데 잔액은 한쪽만 깎여, 내역과 잔액이 조용히 어긋났다. */
+{
+  const log = [], srv = makeServer();
+  const start = { tx: [TX('t1', '기존')], accounts: ACC1(10000), settings: {} };
+  srv.row.data = start; srv.row.rev = 5;
+  const phone = makeDevice('폰', srv, log, {
+    data: { ...start, tx: [TX('t1', '기존'), TX('t2', '폰 3천원')], accounts: ACC1(7000) }, rev: 5, base: start });
+  const pc = makeDevice('PC', srv, log, {
+    data: { ...start, tx: [TX('t1', '기존'), TX('t3', 'PC 5천원')], accounts: ACC1(5000) }, rev: 5, base: start });
+  await phone.Sync.push();
+  await pc.Sync.push();
+  const bal = srv.row.data.accounts[0].balance;
+  ok('같은 통장을 양쪽에서 쓰면 잔액 변화가 합쳐진다 (10000 −3000 −5000)', bal === 2000, String(bal));
+  ok('  그건 충돌이 아니다', (pc.Sync.lastMerge || {}).clashed === 0, JSON.stringify(pc.Sync.lastMerge));
+  // 한쪽은 이름을, 다른 쪽은 잔액을 바꿨다 — 서로 다른 칸이면 둘 다 살린다
+  const log2 = [], srv2 = makeServer();
+  srv2.row.data = start; srv2.row.rev = 5;
+  const a = makeDevice('폰', srv2, log2, {
+    data: { ...start, accounts: [{ ...ACC1(10000)[0], name: '생활비' }] }, rev: 5, base: start });
+  const b = makeDevice('PC', srv2, log2, { data: { ...start, accounts: ACC1(4000) }, rev: 5, base: start });
+  await a.Sync.push(); await b.Sync.push();
+  const acc = srv2.row.data.accounts[0];
+  ok('  서로 다른 칸을 고쳤으면 둘 다 남는다', acc.name === '생활비' && acc.balance === 4000,
+    `${acc.name} · ${acc.balance}`);
+}
+
+/* ══════ ⑮ 설정은 항목별로 합친다 ══════
+   설정을 한 덩어리로 비교하면, 폰에서 '남겨둘 돈' 을 바꾸고 PC 에서 화면 보기를
+   바꾸기만 해도 한쪽이 통째로 사라졌다. */
+{
+  const log = [], srv = makeServer();
+  const start = { tx: [], accounts: ACC1(1), settings: { buffer: 0, cardView: 'manage' } };
+  srv.row.data = start; srv.row.rev = 5;
+  const phone = makeDevice('폰', srv, log, {
+    data: { ...start, settings: { buffer: 300000, cardView: 'manage' } }, rev: 5, base: start });
+  const pc = makeDevice('PC', srv, log, {
+    data: { ...start, settings: { buffer: 0, cardView: 'bill' } }, rev: 5, base: start });
+  await phone.Sync.push(); await pc.Sync.push();
+  const st = srv.row.data.settings;
+  ok('서로 다른 설정을 바꿨으면 둘 다 남는다', st.buffer === 300000 && st.cardView === 'bill', JSON.stringify(st));
+}
+
+/* ══════ ⑯ 다른 기기에서 '전체 초기화' 했으면 되살리지 않는다 ══════
+   못 올린 기록을 지키려고 받아올 때 합치게 됐지만, 서버가 일부러 비워진 경우까지 합치면
+   지운 데이터가 이 기기에서 되살아나 다시 올라간다. 초기화는 초기화로 따른다. */
+{
+  const log = [], srv = makeServer();
+  const start = { tx: [TX('t1', '기존')], accounts: ACC1(10000), settings: {} };
+  srv.row.data = { accounts: [], cards: [], tx: [], fixed: [], invLogs: [], reports: {}, settings: {} };
+  srv.row.rev = 6;                                // PC 가 모든 기기 초기화를 눌렀다
+  const phone = makeDevice('폰', srv, log, {
+    data: { ...start, accounts: ACC1(9000) }, rev: 5, base: start });   // 폰에는 못 올린 변경이 조금 있다
+  phone.Sync.dirty = false;
+  await phone.Sync.pull(true);
+  ok('초기화된 클라우드를 받아오면 이 기기도 비워진다', phone.read().tx.length === 0 && phone.read().accounts.length === 0,
+    `거래 ${phone.read().tx.length}건 · 계좌 ${phone.read().accounts.length}개`);
+  ok('  지운 데이터를 다시 올리지 않는다', srv.row.rev === 6 && srv.row.data.tx.length === 0, `rev=${srv.row.rev}`);
+  ok('  덮기 전 상태는 백업해 둔다', !!phone.store['claudeflow_conflict_backup']);
+}

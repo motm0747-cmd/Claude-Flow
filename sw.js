@@ -3,7 +3,7 @@
  * 목적: 설치형 PWA + 오프라인 동작. 앱 껍데기는 캐시, API 호출은 절대 캐시하지 않음.
  * 캐시 버전을 올리면(아래 CACHE) 이전 캐시는 자동 정리된다.
  * ═══════════════════════════════════════════════════════════════════════ */
-const CACHE = 'claude-flow-v37';
+const CACHE = 'claude-flow-v38';
 
 // 앱 껍데기(오프라인에도 떠야 하는 정적 자원)
 const SHELL = [
@@ -44,26 +44,41 @@ function put(req, res) {
   return res;
 }
 
+/* 네트워크 우선 — 단, 기다리는 데 한도를 둔다.
+ * '실패하면 캐시' 만으로는 모자랐다. 신호가 약한 곳(지하철·엘리베이터)에서는 요청이
+ * 실패하지도 끝나지도 않은 채 수십 초를 끄는데, 그동안 앱은 흰 화면이다 — 캐시에
+ * 멀쩡한 앱이 있는데도. 3.5초 안에 대답이 없으면 캐시로 먼저 띄우고, 늦게 온 응답은
+ * 캐시에 넣어 다음에 열 때 반영한다. 캐시에 없으면 끝까지 네트워크를 기다린다. */
+const NET_WAIT = 3500;
+function netFirst(req, fallbackUrl) {
+  const fromCache = () => caches.match(req).then((m) => m || (fallbackUrl ? caches.match(fallbackUrl) : undefined));
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (res) => { if (!done && res) { done = true; resolve(res); } };
+    const timer = setTimeout(() => { fromCache().then(finish); }, NET_WAIT);
+    fetch(req).then((res) => { clearTimeout(timer); finish(put(req, res)); })
+      .catch(() => {
+        clearTimeout(timer);
+        fromCache().then((m) => { if (!done) { done = true; resolve(m || Response.error()); } });
+      });
+  });
+}
+
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;                 // 쓰기 요청은 건드리지 않음
   const url = new URL(req.url);
   const sameOrigin = url.origin === self.location.origin;
 
-  // 1) 페이지 이동(navigation): 네트워크 우선, 실패 시 캐시된 index.html
+  // 1) 페이지 이동(navigation): 네트워크 우선, 실패하거나 너무 느리면 캐시된 index.html
   if (req.mode === 'navigate') {
-    e.respondWith(
-      fetch(req).then((res) => put(req, res))
-        .catch(() => caches.match(req).then((m) => m || caches.match('./index.html')))
-    );
+    e.respondWith(netFirst(req, './index.html'));
     return;
   }
 
-  // 2) 같은 출처 정적 자원: 네트워크 우선(업데이트 반영), 실패 시 캐시
+  // 2) 같은 출처 정적 자원: 네트워크 우선(업데이트 반영), 실패하거나 너무 느리면 캐시
   if (sameOrigin) {
-    e.respondWith(
-      fetch(req).then((res) => put(req, res)).catch(() => caches.match(req))
-    );
+    e.respondWith(netFirst(req));
     return;
   }
 

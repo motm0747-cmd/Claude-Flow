@@ -180,6 +180,49 @@ const SEED = `
   await ctx.close();
 }
 
+/* ══════ ⑧-b 카드로 긁는 돈을 통장에서 매일 빠지는 것처럼 세지 않는다 ══════
+   곡선은 '평소 지출' 을 날마다 통장에서 뺀다. 그런데 평소 지출의 대부분을 신용카드로
+   쓰는 사람은 그 돈이 날마다 빠지지 않는다 — 결제일에 한 번에 빠지고, 그건 이미
+   '카드 결제' 로 따로 빼고 있다. 둘 다 빼면 카드 쓰는 사람일수록 남는 돈이 실제보다
+   훨씬 적게 나온다(결제일이 24일 뒤면 수십만 원). */
+{
+  const { ctx, p } = await at('2026-10-21T10:00:00+09:00');
+  const r = await evOf(p, `(()=>{ ${SEED}
+    // 지난 두 달도 전부 이 카드로 썼다 (이미 결제 끝난 것)
+    ['2026-08','2026-09'].forEach(m=>{
+      for(let i=1;i<=20;i++)S.tx.push({id:m+'k'+i,type:'expense',date:m+'-'+String(i).padStart(2,'0'),
+        amount:50000,cat:'식비',memo:'밥',payKind:'card',payId:'c1',months:1,paidPortions:1});
+    });
+    _discInvalidate(); save();
+    const plan=cashflowPlan(), a=afterCardPay(plan);
+    return {variable:plan.variable, share:plan.creditShare, after:a.after, total:a.total}; })()`);
+  ok('평소 지출은 있다', r.variable > 0, `월 ${r.variable}원 ${r._err || ''}`);
+  ok('  전부 신용카드로 쓴다는 걸 안다', r.share === 1, String(r.share));
+  // 240만 + 급여 280만 − 월세 55만 − 카드값 75.6만. 날마다 더 빠지는 건 없다
+  ok('  카드값만 빼고, 그 지출을 한 번 더 빼지 않는다', r.after === 2400000 + 2800000 - 550000 - 756000,
+    `${r.after} (카드값 ${r.total})`);
+  await ctx.close();
+}
+
+/* ══════ ⑧-c 현금·체크로 쓰는 몫은 그대로 날마다 뺀다 ══════ */
+{
+  const { ctx, p } = await at('2026-10-21T10:00:00+09:00');
+  const r = await evOf(p, `(()=>{ ${SEED}
+    ['2026-08','2026-09'].forEach(m=>{
+      for(let i=1;i<=20;i++)S.tx.push({id:m+'k'+i,type:'expense',date:m+'-'+String(i).padStart(2,'0'),
+        amount:50000,cat:'식비',memo:'밥',payKind:'cash'});
+    });
+    S.tx=S.tx.filter(t=>!/^c\\d/.test(t.id));        // 이번 달 카드 사용은 없는 사람
+    _discInvalidate(); save();
+    const plan=cashflowPlan();
+    const d3=plan.line[3];                        // 10/24 — 급여·월세(25일) 전날
+    return {variable:plan.variable, share:plan.creditShare, start:plan.start, bal3:d3.bal}; })()`);
+  ok('현금으로 쓰는 사람은 카드 비중이 0', r.share === 0, String(r.share));
+  ok('  평소 지출이 날마다 빠진다', r.bal3 < r.start && r.start - r.bal3 === 3 * Math.round(r.variable / 30.44),
+    `${r.start} → 3일 뒤 ${r.bal3} (월 ${r.variable})`);
+  await ctx.close();
+}
+
 /* ══════ ⑨ 카드가 여럿이면 같은 날 것을 묶는다 ══════ */
 {
   const { ctx, p } = await at('2026-10-21T10:00:00+09:00');
